@@ -118,6 +118,29 @@ const run = async () => {
     assert.equal(res.json.valid, true, res.text);
   });
 
+  check('audit chain anchor receipt is created and valid', async () => {
+    const res = await call('/audit-logs/anchor', { token: admin.token });
+    assert.equal(res.status, 200, res.text);
+    assert.equal(res.json.anchorFormat, 'securevault-anchor-v1');
+    assert.equal(res.json.merkleRoot.length, 64);
+    assert.equal(res.json.chainValid, true);
+    assert.ok(res.json.recordCount > 0);
+  });
+
+  check('admin can export a compliance evidence pack', async () => {
+    const res = await call('/privacy/compliance-pack', { token: admin.token });
+    assert.equal(res.status, 200, res.text);
+    assert.equal(res.json.packFormat, 'securevault-compliance-pack-v1');
+    assert.equal(res.json.auditTrail.verification.valid, true);
+    assert.ok(res.json.knownLimitations.length >= 5);
+    assert.ok(res.json.accessControl.matrix);
+  });
+
+  check('HR cannot export the compliance pack', async () => {
+    const res = await call('/privacy/compliance-pack', { token: hr.token });
+    assert.equal(res.status, 403);
+  });
+
   check('sensitive decryptions are audit-logged', async () => {
     const res = await call('/audit-logs?action=SENSITIVE_FIELDS_DECRYPTED&limit=5', { token: admin.token });
     assert.equal(res.status, 200);

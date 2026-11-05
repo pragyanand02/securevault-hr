@@ -102,8 +102,34 @@ const appendAudit = (entry) => enqueue(async () => {
   }
 });
 
-const verifyChain = async ({ limit = 10000 } = {}) => {
-  const logs = await AuditLog.find()
+// Merkle root over an ordered list of record hashes.
+// A single 32-byte value commits to every record in the window, which is what
+// makes external anchoring practical: publish one root instead of N hashes.
+// Odd nodes are promoted unchanged (the last node is paired with itself).
+const hashPair = (left, right) => crypto
+  .createHash('sha256')
+  .update(`${left}:${right}`)
+  .digest('hex');
+
+const computeMerkleRoot = (hashes = []) => {
+  if (!Array.isArray(hashes) || hashes.length === 0) return null;
+
+  let level = hashes.map((hash) => String(hash).toLowerCase());
+  while (level.length > 1) {
+    const next = [];
+    for (let index = 0; index < level.length; index += 2) {
+      const left = level[index];
+      const right = index + 1 < level.length ? level[index + 1] : left;
+      next.push(hashPair(left, right));
+    }
+    level = next;
+  }
+  return level[0];
+};
+
+const verifyChain = async ({ limit = 10000, to = null } = {}) => {
+  const query = to ? { sequence: { $lte: Number(to) } } : {};
+  const logs = await AuditLog.find(query)
     .sort({ sequence: 1 })
     .limit(limit)
     .lean();
@@ -153,18 +179,81 @@ const verifyChain = async ({ limit = 10000 } = {}) => {
 
   const state = await AuditChainState.findById('primary').lean();
   const truncated = logs.length === limit;
-  const coversLatest = !truncated && state ? state.lastHash === previousHash : false;
+  const coversLatest = !to && !truncated && state ? state.lastHash === previousHash : false;
 
   return {
     valid: true,
     total: logs.length,
     checkedAt: new Date().toISOString(),
     latestHash: previousHash,
+    sequenceTo: logs[logs.length - 1].sequence,
     coversLatest,
     truncated,
     message: coversLatest
       ? 'All audit records verified. The chain is intact.'
       : 'Verified the checked range. Older/newer records may exist beyond this window.',
+  };
+};
+
+// Builds a portable anchor receipt for the chain (or a prefix of it).
+// Publishing this small JSON outside MongoDB (git, S3 Object Lock, an RFC 3161
+// timestamp) closes the "delete the newest rows" gap: the stored root can no
+// longer be recomputed from a truncated trail.
+const buildAnchorReceipt = async ({ to = null } = {}) => {
+  const verification = await verifyChain(to ? { to } : {});
+  const query = to ? { sequence: { $lte: Number(to) } } : {};
+  const logs = await AuditLog.find(query)
+    .sort({ sequence: 1 })
+    .select('sequence hash')
+    .lean();
+
+  return {
+    anchorFormat: 'securevault-anchor-v1',
+    generatedAt: new Date().toISOString(),
+    sequenceFrom: logs[0]?.sequence ?? 0,
+    sequenceTo: logs[logs.length - 1]?.sequence ?? 0,
+    recordCount: logs.length,
+    merkleRoot: computeMerkleRoot(logs.map((log) => log.hash)),
+    latestHash: logs[logs.length - 1]?.hash ?? GENESIS,
+    chainValid: verification.valid,
+    coversLatest: verification.coversLatest,
+    note: 'Publish this receipt outside the database. Recompute the Merkle root over the same sequence range to verify the trail later.',
+  };
+};
+
+// Recomputes the root for the receipt's sequence range and compares it with the
+// published value. Used by scripts/anchor-chain.js.
+const verifyAnchorReceipt = async (receipt) => {
+  if (!receipt || receipt.anchorFormat !== 'securevault-anchor-v1') {
+    return { valid: false, reason: 'Unknown or missing anchor format' };
+  }
+
+  const verification = await verifyChain({ to: receipt.sequenceTo });
+  const logs = await AuditLog.find({ sequence: { $lte: receipt.sequenceTo } })
+    .sort({ sequence: 1 })
+    .select('sequence hash')
+    .lean();
+
+  const merkleRoot = computeMerkleRoot(logs.map((log) => log.hash));
+  const rootMatches = merkleRoot === receipt.merkleRoot;
+  const countMatches = logs.length === receipt.recordCount;
+
+  return {
+    valid: Boolean(verification.valid && rootMatches && countMatches),
+    checkedAt: new Date().toISOString(),
+    sequenceTo: receipt.sequenceTo,
+    expectedRoot: receipt.merkleRoot,
+    recomputedRoot: merkleRoot,
+    rootMatches,
+    countMatches,
+    chainValid: verification.valid,
+    reason: rootMatches && countMatches && verification.valid
+      ? 'Anchor matches the stored chain'
+      : !verification.valid
+        ? `Chain verification failed: ${verification.reason}`
+        : !countMatches
+          ? `Record count changed: receipt=${receipt.recordCount}, stored=${logs.length}`
+          : 'Merkle root mismatch: records were altered or removed',
   };
 };
 
@@ -182,6 +271,9 @@ module.exports = {
   GENESIS,
   canonicalize,
   computeHash,
+  computeMerkleRoot,
+  buildAnchorReceipt,
+  verifyAnchorReceipt,
   appendAudit,
   verifyChain,
   getChainState,

@@ -1,5 +1,5 @@
 const AuditLog = require('../models/AuditLog');
-const { verifyChain, getChainState } = require('../utils/auditChain');
+const { verifyChain, getChainState, buildAnchorReceipt } = require('../utils/auditChain');
 const { logEvent } = require('../middleware/auditLogger');
 
 const escapeRegex = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -74,6 +74,32 @@ exports.verifyAuditChain = async (req, res, next) => {
       metadata: { valid: result.valid, total: result.total, brokenAtSequence: result.brokenAtSequence || null },
     });
     return res.status(200).json(result);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// @route GET /api/audit-logs/anchor  (Admin only)
+// Returns a small, portable receipt committing to the current chain. Publishing
+// it outside the database closes the "delete the newest rows" gap.
+exports.getAuditAnchor = async (req, res, next) => {
+  try {
+    const receipt = await buildAnchorReceipt();
+
+    await logEvent({
+      req,
+      action: 'AUDIT_ANCHOR_CREATED',
+      category: 'SYSTEM',
+      severity: 'warning',
+      details: `Audit chain anchor created for sequence #${receipt.sequenceFrom}-#${receipt.sequenceTo}`,
+      metadata: {
+        merkleRoot: receipt.merkleRoot,
+        recordCount: receipt.recordCount,
+        chainValid: receipt.chainValid,
+      },
+    });
+
+    return res.status(200).json(receipt);
   } catch (error) {
     return next(error);
   }

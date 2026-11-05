@@ -1,16 +1,17 @@
-const crypto = require('crypto');
 const User = require('../models/User');
 const Consent = require('../models/Consent');
 const DataRequest = require('../models/DataRequest');
 const Leave = require('../models/Leave');
 const AuditLog = require('../models/AuditLog');
+const AccessGrant = require('../models/AccessGrant');
 const { safeDecrypt, encryptionInfo } = require('../utils/encryption');
+const { verifyChain, getChainState, buildAnchorReceipt } = require('../utils/auditChain');
 const { ACCESS_MATRIX } = require('../utils/policy');
 const { purposeMeta } = require('../services/consentService');
+const { anonymiseUser, RETENTION_YEARS } = require('../services/retentionService');
 const { logEvent } = require('../middleware/auditLogger');
 
 const RESPONSE_DAYS = Number(process.env.DSAR_RESPONSE_DAYS || 30);
-const RETENTION_YEARS = Number(process.env.RETENTION_YEARS || 7);
 
 const dueDate = () => new Date(Date.now() + RESPONSE_DAYS * 24 * 60 * 60 * 1000);
 
@@ -313,28 +314,6 @@ exports.getAllRequests = async (_req, res, next) => {
   }
 };
 
-const anonymiseUser = async (userId) => {
-  const user = await User.findById(userId);
-  if (!user) return null;
-
-  user.name = 'Erased Data Principal';
-  user.email = `erased+${user._id}@invalid.local`;
-  user.password = await require('bcryptjs').hash(crypto.randomBytes(32).toString('hex'), 12);
-  user.department = null;
-  user.designation = null;
-  user.employeeCode = null;
-  user.salary = undefined;
-  user.bankDetails = undefined;
-  user.isActive = false;
-  user.isDeleted = true;
-  user.deletedAt = new Date();
-  user.tokenVersion += 1;
-  user.refreshTokenHash = null;
-  user.refreshTokenExpiresAt = null;
-  await user.save();
-  return user;
-};
-
 // @route PUT /api/privacy/requests/:id  (Admin)
 exports.reviewDataRequest = async (req, res, next) => {
   try {
@@ -408,6 +387,156 @@ exports.getAccessMatrix = async (req, res) => {
     ],
     matrix: ACCESS_MATRIX,
   });
+};
+
+// @route GET /api/privacy/compliance-pack  (Admin / DPO)
+// A portable, machine-readable evidence pack: control status, chain proof,
+// consent coverage, DSAR SLA and the access matrix. Contains counts and policy
+// only - never salary/bank plaintext.
+exports.getCompliancePack = async (req, res, next) => {
+  try {
+    const now = new Date();
+    const since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+    const [
+      totalUsers,
+      activeUsers,
+      totalConsents,
+      grantedConsents,
+      pendingRequests,
+      overdueRequests,
+      deferredRequests,
+      erasureRequests,
+      pendingGrants,
+      activeGrants,
+      sensitiveReads,
+      failedLogins,
+      chain,
+      verification,
+      anchor,
+    ] = await Promise.all([
+      User.countDocuments({ isDeleted: false }),
+      User.countDocuments({ isDeleted: false, isActive: true }),
+      Consent.countDocuments(),
+      Consent.countDocuments({ granted: true }),
+      DataRequest.countDocuments({ status: { $in: ['pending', 'in_review'] } }),
+      DataRequest.countDocuments({ status: { $in: ['pending', 'in_review'] }, dueAt: { $lt: now } }),
+      DataRequest.countDocuments({ status: 'deferred' }),
+      DataRequest.countDocuments({ type: 'erasure' }),
+      AccessGrant.countDocuments({ status: 'pending' }),
+      AccessGrant.countDocuments({ status: 'approved', expiresAt: { $gt: now } }),
+      AuditLog.countDocuments({ action: 'SENSITIVE_FIELDS_DECRYPTED', createdAt: { $gte: since } }),
+      AuditLog.countDocuments({ action: 'AUTH_LOGIN_FAILED', createdAt: { $gte: since } }),
+      getChainState(),
+      verifyChain(),
+      buildAnchorReceipt(),
+    ]);
+
+    const coveragePercent = totalConsents === 0
+      ? 0
+      : Math.round((grantedConsents / totalConsents) * 100);
+
+    const pack = {
+      packFormat: 'securevault-compliance-pack-v1',
+      generatedAt: now.toISOString(),
+      generatedBy: {
+        id: req.user.id,
+        name: req.user.name,
+        email: req.user.email,
+        role: req.user.role,
+      },
+      positioning: 'DPDP-ready employee data trust layer for Indian SMEs',
+      disclaimer: 'Engineering evidence pack, not legal advice. Obligation mapping and known gaps are in docs/DPDP.md.',
+      encryption: encryptionInfo(),
+      auditTrail: {
+        chain,
+        verification: {
+          valid: verification.valid,
+          total: verification.total,
+          checkedAt: verification.checkedAt,
+          coversLatest: verification.coversLatest,
+          brokenAtSequence: verification.brokenAtSequence || null,
+          reason: verification.reason || null,
+        },
+        anchor: {
+          format: anchor.anchorFormat,
+          sequenceFrom: anchor.sequenceFrom,
+          sequenceTo: anchor.sequenceTo,
+          recordCount: anchor.recordCount,
+          merkleRoot: anchor.merkleRoot,
+          chainValid: anchor.chainValid,
+        },
+        sensitiveReadsLast24h: sensitiveReads,
+        failedLoginsLast24h: failedLogins,
+      },
+      consent: {
+        totalRecords: totalConsents,
+        grantedRecords: grantedConsents,
+        coveragePercent,
+        note: 'Coverage counts all seven purpose records, including mandatory processing required by contract/legal obligation.',
+      },
+      dataPrincipalRequests: {
+        open: pendingRequests,
+        overdue: overdueRequests,
+        deferredUnderLegalHold: deferredRequests,
+        erasureRequests,
+        responseSlaDays: RESPONSE_DAYS,
+      },
+      accessControl: {
+        pendingTimeBoundGrants: pendingGrants,
+        activeTimeBoundGrants: activeGrants,
+        matrix: ACCESS_MATRIX,
+        principles: [
+          'Least privilege with deny-by-default policy',
+          'Department-scoped ABAC for HR, self-only for employees',
+          'Separation of duties: HR cannot read the audit trail; no self-approval',
+          'Every sensitive decryption creates a critical audit event',
+        ],
+      },
+      retention: {
+        years: RETENTION_YEARS,
+        totalActiveRecords: totalUsers,
+        activeEmployees: activeUsers,
+        erasureRule: 'Soft delete, then anonymise only after the statutory retention window; active employees are never purged.',
+        command: 'npm run retention:run  (dry run)  |  npm run retention:apply',
+      },
+      evidence: {
+        unitTests: 'npm test (node --test)',
+        endToEnd: 'npm run smoke',
+        tamperDemo: 'npm run tamper:demo',
+        anchorWorkflow: 'npm run anchor:chain  |  npm run anchor:verify -- <receipt.json>',
+      },
+      knownLimitations: [
+        'Tamper-evident, not tamper-proof: anchor the chain head externally to close the truncation gap.',
+        'Keys live in the environment; KMS/HSM envelope encryption is roadmap work.',
+        'No MFA/WebAuthn yet; privileged accounts are the first target.',
+        'Single-instance audit-chain lock; multi-instance needs a distributed lock.',
+        'No breach-notification workflow or SIEM alerting yet.',
+        'Erasure anonymises the live record; cryptographic erasure of backups is roadmap work.',
+      ],
+    };
+
+    await logEvent({
+      req,
+      action: 'COMPLIANCE_PACK_EXPORTED',
+      category: 'PRIVACY',
+      severity: 'critical',
+      targetId: req.user.id,
+      targetType: 'User',
+      details: 'Admin exported the compliance evidence pack',
+      metadata: {
+        chainValid: verification.valid,
+        merkleRoot: anchor.merkleRoot,
+        openRequests: pendingRequests,
+      },
+    });
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="securevault-compliance-pack-${now.toISOString().slice(0, 10)}.json"`);
+    return res.status(200).send(JSON.stringify(pack, null, 2));
+  } catch (error) {
+    return next(error);
+  }
 };
 
 // @route GET /api/privacy/stats  (Admin)

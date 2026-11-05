@@ -10,6 +10,10 @@
     "seed:reset": "node scripts/seed.js --reset",
     "smoke": "node scripts/smoke.js",
     "tamper:demo": "node scripts/tamper-demo.js",
+    "anchor:chain": "node scripts/anchor-chain.js",
+    "anchor:verify": "node scripts/anchor-chain.js verify",
+    "retention:run": "node scripts/retention-run.js",
+    "retention:apply": "node scripts/retention-run.js --apply",
     "rotate:encryption": "node scripts/rotate-encryption.js",
     "test": "node --test",
     "security:audit": "npm audit --omit=dev"

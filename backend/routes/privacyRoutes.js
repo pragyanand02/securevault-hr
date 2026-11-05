@@ -11,6 +11,7 @@ const {
   reviewDataRequest,
   getAccessMatrix,
   getPrivacyStats,
+  getCompliancePack,
 } = require('../controllers/privacyController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const { sensitiveLimiter } = require('../middleware/rateLimiter');
@@ -37,5 +38,6 @@ router.get('/access-matrix', getAccessMatrix);
 router.get('/requests', authorize('admin'), getAllRequests);
 router.put('/requests/:id', authorize('admin'), objectIdParam('id'), dataRequestReviewRules, handleValidation, reviewDataRequest);
 router.get('/stats', authorize('admin'), getPrivacyStats);
+router.get('/compliance-pack', authorize('admin'), sensitiveLimiter, getCompliancePack);
 
 module.exports = router;

@@ -18,6 +18,9 @@ dist/
 npm-debug.log*
 yarn-debug.log*
 
+# Generated anchor receipts (create + publish deliberately, do not commit demo output)
+docs/anchors/*.json
+
 # OS & Editor files
 .DS_Store
 Thumbs.db
