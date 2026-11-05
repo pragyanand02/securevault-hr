@@ -57,6 +57,7 @@ const SecurityCenter = () => {
   const [verification, setVerification] = useState(null);
   const [loading, setLoading] = useState(true);
   const [verifying, setVerifying] = useState(false);
+  const [downloading, setDownloading] = useState('');
   const [busyId, setBusyId] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -102,6 +103,47 @@ const SecurityCenter = () => {
       setError(err.response?.data?.message || 'Verification failed');
     } finally {
       setVerifying(false);
+    }
+  };
+
+  const downloadJson = (data, filename) => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadAnchor = async () => {
+    setDownloading('anchor');
+    setError('');
+    try {
+      const res = await api.get('/audit-logs/anchor');
+      downloadJson(res.data, `securevault-anchor-${res.data.sequenceTo}.json`);
+      flash(`Anchor receipt for sequence #${res.data.sequenceTo} downloaded (root ${String(res.data.merkleRoot).slice(0, 12)}…).`);
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not create the anchor receipt');
+    } finally {
+      setDownloading('');
+    }
+  };
+
+  const downloadCompliancePack = async () => {
+    setDownloading('pack');
+    setError('');
+    try {
+      const res = await api.get('/privacy/compliance-pack');
+      downloadJson(res.data, `securevault-compliance-pack-${new Date().toISOString().slice(0, 10)}.json`);
+      flash('Compliance evidence pack downloaded (counts, chain proof and access matrix).');
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not generate the compliance pack');
+    } finally {
+      setDownloading('');
     }
   };
 
@@ -200,6 +242,18 @@ const SecurityCenter = () => {
             Retention: {privacy?.retentionYears ?? 7} years
           </span>
         </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            onClick={downloadCompliancePack}
+            disabled={downloading === 'pack'}
+            className="rounded-lg border border-white/25 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-60"
+          >
+            {downloading === 'pack' ? 'Preparing pack…' : 'Download compliance pack'}
+          </button>
+          <span className="self-center text-[11px] text-slate-400">
+            Counts, chain proof and access matrix — no salary/bank contents
+          </span>
+        </div>
       </div>
 
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-600">{error}</div>}
@@ -231,13 +285,22 @@ const SecurityCenter = () => {
         title="Audit chain integrity"
         subtitle="Every event is linked to the previous one with SHA-256. Editing any stored record breaks verification."
         action={
-          <button
-            onClick={verifyChain}
-            disabled={verifying}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-60"
-          >
-            {verifying ? 'Verifying…' : 'Verify chain now'}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={downloadAnchor}
+              disabled={downloading === 'anchor'}
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+            >
+              {downloading === 'anchor' ? 'Anchoring…' : 'Download anchor receipt'}
+            </button>
+            <button
+              onClick={verifyChain}
+              disabled={verifying}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-60"
+            >
+              {verifying ? 'Verifying…' : 'Verify chain now'}
+            </button>
+          </div>
         }
       >
         <div className="grid gap-4 md:grid-cols-2">

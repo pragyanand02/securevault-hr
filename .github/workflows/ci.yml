@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-tests:
+    name: Backend unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - name: Dependency audit (informational)
+        run: npm run security:audit
+        continue-on-error: true
+
+  frontend-build:
+    name: Frontend lint and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  end-to-end-smoke:
+    name: End-to-end smoke (23 checks)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      PORT: 5000
+      CORS_ORIGIN: http://localhost:5173
+      MONGO_URI: mongodb://127.0.0.1:27017/securevaulthr_ci
+      JWT_SECRET: ci-access-token-secret-that-is-long-enough-123456
+      JWT_REFRESH_SECRET: ci-refresh-token-secret-that-is-long-enough-123456
+      AES_SECRET_KEY: ci-field-encryption-key-that-is-long-enough-123456
+      AES_KEY_ID: k1
+      RETENTION_YEARS: 7
+      DSAR_RESPONSE_DAYS: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Seed, start API and run smoke checks
+        run: |
+          npm run seed:reset
+          node server.js &
+          SERVER_PID=$!
+          for attempt in $(seq 1 30); do
+            if curl -sf http://localhost:5000/api/health > /dev/null; then
+              echo "API is healthy after ${attempt}s"
+              break
+            fi
+            sleep 1
+          done
+          npm run smoke
+          kill "$SERVER_PID"
