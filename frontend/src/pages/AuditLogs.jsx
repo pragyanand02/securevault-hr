@@ -1,159 +1,310 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import api from '../api/axios';
 
 const actionBadge = {
-  CREATE_EMPLOYEE: 'bg-green-100 text-green-800 border-green-200',
-  UPDATE_EMPLOYEE: 'bg-blue-100 text-blue-800 border-blue-200',
-  DELETE_EMPLOYEE: 'bg-red-100 text-red-800 border-red-200',
-  LEAVE_APPROVED: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-  LEAVE_REJECTED: 'bg-rose-100 text-rose-800 border-rose-200',
-  UPDATE_PROFILE: 'bg-purple-100 text-purple-800 border-purple-200',
-  APPLY_LEAVE: 'bg-amber-100 text-amber-800 border-amber-200',
-  CANCEL_LEAVE: 'bg-slate-100 text-slate-800 border-slate-200',
+  AUTH_LOGIN_SUCCESS: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  AUTH_LOGIN_FAILED: 'bg-red-50 text-red-700 border-red-200',
+  AUTH_LOGIN_BLOCKED: 'bg-red-50 text-red-700 border-red-200',
+  AUTH_LOGOUT: 'bg-slate-100 text-slate-700 border-slate-200',
+  ACCOUNT_REGISTERED: 'bg-blue-50 text-blue-700 border-blue-200',
+  PASSWORD_CHANGED: 'bg-amber-50 text-amber-700 border-amber-200',
+  EMPLOYEE_CREATED: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  EMPLOYEE_UPDATED: 'bg-blue-50 text-blue-700 border-blue-200',
+  EMPLOYEE_SOFT_DELETED: 'bg-red-50 text-red-700 border-red-200',
+  EMPLOYEE_RESTORED: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  SENSITIVE_FIELDS_DECRYPTED: 'bg-red-50 text-red-700 border-red-200',
+  EMPLOYEE_DIRECTORY_VIEWED: 'bg-slate-100 text-slate-700 border-slate-200',
+  LEAVE_APPLIED: 'bg-amber-50 text-amber-700 border-amber-200',
+  LEAVE_APPROVED: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  LEAVE_REJECTED: 'bg-rose-50 text-rose-700 border-rose-200',
+  LEAVE_CANCELLED: 'bg-slate-100 text-slate-700 border-slate-200',
+  CONSENT_GRANTED: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  CONSENT_WITHDRAWN: 'bg-amber-50 text-amber-700 border-amber-200',
+  DATA_EXPORTED: 'bg-purple-50 text-purple-700 border-purple-200',
+  ERASURE_REQUESTED: 'bg-red-50 text-red-700 border-red-200',
+  DATA_ERASED: 'bg-red-50 text-red-700 border-red-200',
+  JIT_ACCESS_REQUESTED: 'bg-blue-50 text-blue-700 border-blue-200',
+  JIT_ACCESS_APPROVED: 'bg-amber-50 text-amber-700 border-amber-200',
+  JIT_ACCESS_DENIED: 'bg-slate-100 text-slate-700 border-slate-200',
+  JIT_ACCESS_REVOKED: 'bg-slate-100 text-slate-700 border-slate-200',
+  AUDIT_CHAIN_VERIFIED: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  AUDIT_TRAIL_VIEWED: 'bg-slate-100 text-slate-700 border-slate-200',
 };
+
+const severityStyle = {
+  info: 'bg-slate-100 text-slate-600 border-slate-200',
+  warning: 'bg-amber-50 text-amber-700 border-amber-200',
+  critical: 'bg-red-50 text-red-700 border-red-200',
+};
+
+const categories = ['ALL', 'AUTH', 'EMPLOYEE', 'LEAVE', 'PRIVACY', 'ACCESS', 'SYSTEM'];
+const severities = ['ALL', 'info', 'warning', 'critical'];
 
 const AuditLogs = () => {
   const [logs, setLogs] = useState([]);
-  const [filterAction, setFilterAction] = useState('ALL');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [error, setError] = useState('');
+  const [chain, setChain] = useState(null);
+  const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0, limit: 50 });
+  const [category, setCategory] = useState('ALL');
+  const [severity, setSeverity] = useState('ALL');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [verification, setVerification] = useState(null);
+  const [verifying, setVerifying] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const loadLogs = async () => {
+  const loadLogs = useCallback(async () => {
     setLoading(true);
+    setError('');
     try {
-      const res = await api.get('/audit-logs');
-      setLogs(res.data);
+      const params = { page, limit: 50 };
+      if (category !== 'ALL') params.category = category;
+      if (severity !== 'ALL') params.severity = severity;
+      if (search.trim()) params.search = search.trim();
+
+      const res = await api.get('/audit-logs', { params });
+      setLogs(res.data.data || []);
+      setChain(res.data.chain || null);
+      setPagination(res.data.pagination || { page: 1, pages: 1, total: 0, limit: 50 });
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load audit logs');
     } finally {
       setLoading(false);
     }
+  }, [category, severity, search, page]);
+
+  useEffect(() => { loadLogs(); }, [loadLogs]);
+
+  const verifyChain = async () => {
+    setVerifying(true);
+    setError('');
+    try {
+      const res = await api.get('/audit-logs/verify');
+      setVerification(res.data);
+      if (!res.data.valid) {
+        setError(`Chain verification FAILED at sequence ${res.data.brokenAtSequence}: ${res.data.reason}`);
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || 'Verification failed');
+    } finally {
+      setVerifying(false);
+    }
   };
 
-  useEffect(() => {
-    loadLogs();
-  }, []);
-
-  const filteredLogs = logs.filter((log) => {
-    const matchesAction = filterAction === 'ALL' || log.action === filterAction;
-    const matchesSearch =
-      (log.user?.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (log.user?.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (log.details || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (log.action || '').toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesAction && matchesSearch;
-  });
+  const activeFilters = (category !== 'ALL' ? 1 : 0) + (severity !== 'ALL' ? 1 : 0) + (search.trim() ? 1 : 0);
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+    <div className="mx-auto max-w-6xl p-6">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Security Audit Trail</h1>
-          <p className="text-slate-500 text-xs mt-0.5">
-            Immutable trace of system-critical create, update, and delete actions for compliance &amp; accountability.
+          <p className="mt-0.5 max-w-2xl text-xs text-slate-500">
+            Append-only, hash-chained record of authentication, employee, leave, privacy and
+            access events. Each record commits to the one before it, so silent edits are detectable.
           </p>
         </div>
-        <button
-          onClick={loadLogs}
-          className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-3 py-1.5 rounded-lg font-medium transition border border-slate-300 self-start sm:self-auto"
-        >
-          &#x21bb; Refresh Logs
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={loadLogs}
+            className="rounded-lg border border-slate-300 bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-200"
+          >
+            &#x21bb; Refresh
+          </button>
+          <button
+            onClick={verifyChain}
+            disabled={verifying}
+            className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
+          >
+            {verifying ? 'Verifying…' : 'Verify integrity'}
+          </button>
+        </div>
       </div>
 
       {error && (
-        <div className="bg-red-50 text-red-600 text-sm px-4 py-2.5 rounded-lg mb-4 border border-red-200">
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-600">
           {error}
         </div>
       )}
 
-      {/* Filter and Search Bar */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6 flex flex-col sm:flex-row gap-4 justify-between items-center">
-        <div className="w-full sm:w-72">
+      {/* Chain status banner */}
+      <div className={`mb-6 rounded-xl border p-4 ${
+        verification
+          ? verification.valid
+            ? 'border-emerald-200 bg-emerald-50'
+            : 'border-red-200 bg-red-50'
+          : 'border-slate-200 bg-white'
+      }`}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className={`text-sm font-bold ${
+              verification
+                ? verification.valid ? 'text-emerald-700' : 'text-red-700'
+                : 'text-slate-800'
+            }`}>
+              {verification
+                ? verification.valid
+                  ? 'Hash chain intact — no tampering detected'
+                  : `Tampering detected at sequence ${verification.brokenAtSequence}`
+                : 'Integrity not checked in this session'}
+            </p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {verification
+                ? verification.valid
+                  ? `${verification.total} record(s) recomputed. ${verification.coversLatest ? 'Covers the current chain head.' : 'Partial window verified.'}`
+                  : verification.reason
+                : 'Click "Verify integrity" to recompute every hash and compare it with the stored value.'}
+            </p>
+          </div>
+          {chain && (
+            <div className="text-left sm:text-right">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                Chain head · #{chain.sequence}
+              </p>
+              <p className="max-w-xs break-all font-mono text-[11px] text-slate-600">{chain.lastHash}</p>
+              <p className="text-[11px] text-slate-400">{chain.totalRecords} record(s) total</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="mb-6 space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <input
             type="text"
-            placeholder="Search by user, action, or details..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="Search action, actor email, details or target id…"
+            value={search}
+            onChange={(event) => { setSearch(event.target.value); setPage(1); }}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 lg:max-w-md"
           />
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-slate-500">Category:</span>
+            {categories.map((item) => (
+              <button
+                key={item}
+                onClick={() => { setCategory(item); setPage(1); }}
+                className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                  category === item ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {item === 'ALL' ? 'All' : item}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-slate-500 font-medium">Filter Action:</span>
-          {['ALL', 'CREATE_EMPLOYEE', 'UPDATE_EMPLOYEE', 'DELETE_EMPLOYEE', 'LEAVE_APPROVED', 'LEAVE_REJECTED'].map((act) => (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-slate-500">Severity:</span>
+          {severities.map((item) => (
             <button
-              key={act}
-              onClick={() => setFilterAction(act)}
-              className={`text-xs px-2.5 py-1 rounded-md font-medium transition ${
-                filterAction === act
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              key={item}
+              onClick={() => { setSeverity(item); setPage(1); }}
+              className={`rounded-md border px-2.5 py-1 text-xs font-medium capitalize transition ${
+                severity === item
+                  ? 'border-slate-800 bg-slate-800 text-white'
+                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
               }`}
             >
-              {act === 'ALL' ? 'All Actions' : act.replace('_', ' ')}
+              {item === 'ALL' ? 'All' : item}
             </button>
           ))}
+          {activeFilters > 0 && (
+            <button
+              onClick={() => { setCategory('ALL'); setSeverity('ALL'); setSearch(''); setPage(1); }}
+              className="ml-auto text-xs font-medium text-blue-600 hover:underline"
+            >
+              Clear {activeFilters} filter(s)
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Logs Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
-            <tr>
-              <th className="text-left px-4 py-3 font-semibold">Timestamp</th>
-              <th className="text-left px-4 py-3 font-semibold">Actor (User)</th>
-              <th className="text-left px-4 py-3 font-semibold">Role</th>
-              <th className="text-left px-4 py-3 font-semibold">Action Performed</th>
-              <th className="text-left px-4 py-3 font-semibold">Action Details</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {filteredLogs.map((log) => (
-              <tr key={log._id} className="hover:bg-slate-50/75 transition">
-                <td className="px-4 py-3 whitespace-nowrap text-slate-600 font-mono text-xs">
-                  {new Date(log.createdAt).toLocaleString()}
-                </td>
-                <td className="px-4 py-3 font-medium text-slate-800">
-                  {log.user ? (
-                    <div>
-                      <p>{log.user.name}</p>
-                      <p className="text-xs text-slate-400 font-normal">{log.user.email}</p>
-                    </div>
-                  ) : (
-                    <span className="text-slate-400 italic">System / Deleted User</span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  <span className="inline-block bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded capitalize font-medium">
-                    {log.user?.role?.replace('_', ' ') || '—'}
-                  </span>
-                </td>
-                <td className="px-4 py-3 whitespace-nowrap">
-                  <span className={`inline-block text-xs px-2.5 py-1 rounded-full font-semibold border ${actionBadge[log.action] || 'bg-slate-100 text-slate-700 border-slate-200'}`}>
-                    {log.action}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-slate-600 text-xs font-mono">
-                  {log.details || '—'}
-                </td>
-              </tr>
-            ))}
-            {filteredLogs.length === 0 && (
+      {/* Log table */}
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-slate-200 bg-slate-50 text-slate-600">
               <tr>
-                <td colSpan={5} className="px-4 py-12 text-center text-slate-400">
-                  {loading ? 'Loading audit records...' : 'No matching audit records found.'}
-                </td>
+                <th className="px-4 py-3 text-left font-semibold">#</th>
+                <th className="px-4 py-3 text-left font-semibold">Timestamp</th>
+                <th className="px-4 py-3 text-left font-semibold">Actor</th>
+                <th className="px-4 py-3 text-left font-semibold">Action</th>
+                <th className="px-4 py-3 text-left font-semibold">Details</th>
+                <th className="px-4 py-3 text-left font-semibold">Hash</th>
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {logs.map((log) => (
+                <tr key={log._id} className="transition hover:bg-slate-50/75">
+                  <td className="px-4 py-3 font-mono text-xs text-slate-400">{log.sequence}</td>
+                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-600">
+                    {new Date(log.createdAt).toLocaleString()}
+                  </td>
+                  <td className="px-4 py-3">
+                    <p className="font-medium text-slate-800">{log.actorName || 'System'}</p>
+                    <p className="text-xs font-normal text-slate-400">{log.actorEmail || '—'}</p>
+                    <p className="text-[11px] capitalize text-slate-400">{log.actorRole?.replace('_', ' ')}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-block whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-semibold ${actionBadge[log.action] || 'border-slate-200 bg-slate-100 text-slate-700'}`}>
+                      {log.action}
+                    </span>
+                    <span className={`mt-1 block w-fit rounded-full border px-2 py-0.5 text-[10px] font-semibold capitalize ${severityStyle[log.severity] || severityStyle.info}`}>
+                      {log.severity}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-600">
+                    {log.details || '—'}
+                    {log.ip && <span className="mt-0.5 block font-mono text-[10px] text-slate-400">IP {log.ip}</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="font-mono text-[10px] text-slate-400" title={log.hash}>
+                      {log.hash?.slice(0, 12)}…
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {logs.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-12 text-center text-slate-400">
+                    {loading ? 'Loading audit records…' : 'No matching audit records found.'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex flex-col gap-2 border-t border-slate-100 px-4 py-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            Page {pagination.page} of {pagination.pages} · {pagination.total} record(s)
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={pagination.page <= 1 || loading}
+              className="rounded-md border border-slate-200 bg-white px-3 py-1 font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => setPage((current) => Math.min(pagination.pages, current + 1))}
+              disabled={pagination.page >= pagination.pages || loading}
+              className="rounded-md border border-slate-200 bg-white px-3 py-1 font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
+        </div>
       </div>
+
+      <p className="mt-4 text-[11px] leading-relaxed text-slate-400">
+        Note: the application blocks updates and deletes on this collection. The hash chain exists to
+        detect changes made directly in the database by an operator or attacker — run “Verify integrity”
+        after any suspected incident.
+      </p>
     </div>
   );
 };
 
 export default AuditLogs;
-

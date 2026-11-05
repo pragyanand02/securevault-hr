@@ -1,19 +1,28 @@
 {
   "name": "securevault-hr-backend",
   "version": "1.0.0",
-  "description": "SecureVault HR - Employee Management System backend (MERN, RBAC, security-focused)",
+  "description": "SecureVault HR - DPDP-ready employee data trust layer (RBAC + ABAC, authenticated field encryption, tamper-evident audit)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "seed": "node scripts/seed.js",
+    "seed:reset": "node scripts/seed.js --reset",
+    "smoke": "node scripts/smoke.js",
+    "tamper:demo": "node scripts/tamper-demo.js",
+    "rotate:encryption": "node scripts/rotate-encryption.js",
+    "test": "node --test",
+    "security:audit": "npm audit --omit=dev"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.4.0",
     "express-validator": "^7.2.0",
+    "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.5.0"
   },

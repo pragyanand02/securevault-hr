@@ -1,10 +1,16 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
-// Wraps a page - redirects to /login if not logged in,
-// and optionally restricts access to specific roles
 const ProtectedRoute = ({ children, allowedRoles }) => {
-  const { user } = useAuth();
+  const { user, booting } = useAuth();
+
+  if (booting) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-100">
+        <div className="text-sm text-slate-500">Restoring secure session…</div>
+      </div>
+    );
+  }
 
   if (!user) return <Navigate to="/login" replace />;
 

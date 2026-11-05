@@ -1,48 +1,92 @@
-import { createContext, useContext, useState } from 'react';
-import api from '../api/axios';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import api, { setAccessToken } from '../api/axios';
 
 const AuthContext = createContext(null);
 
+// StrictMode mounts effects twice in development. Reuse the same bootstrap
+// promise so two parallel refresh calls cannot race with token rotation.
+let bootstrapPromise = null;
+
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem('user');
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [user, setUser] = useState(null);
+  const [booting, setBooting] = useState(true);
 
-  const login = async (email, password) => {
+  useEffect(() => {
+    let cancelled = false;
+
+    const bootstrap = async () => {
+      try {
+        bootstrapPromise = bootstrapPromise || api.post('/auth/refresh');
+        const res = await bootstrapPromise;
+        if (!cancelled) {
+          setAccessToken(res.data.accessToken);
+          setUser(res.data.user);
+        }
+      } catch {
+        if (!cancelled) {
+          setAccessToken(null);
+          setUser(null);
+        }
+      } finally {
+        bootstrapPromise = null;
+        if (!cancelled) setBooting(false);
+      }
+    };
+
+    bootstrap();
+
+    const handleForcedLogout = () => {
+      setAccessToken(null);
+      setUser(null);
+    };
+    window.addEventListener('auth:logout', handleForcedLogout);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('auth:logout', handleForcedLogout);
+    };
+  }, []);
+
+  const login = useCallback(async (email, password) => {
     const res = await api.post('/auth/login', { email, password });
-    localStorage.setItem('token', res.data.token);
-    localStorage.setItem('user', JSON.stringify(res.data.user));
+    setAccessToken(res.data.accessToken);
     setUser(res.data.user);
     return res.data.user;
-  };
+  }, []);
 
-  const register = async (name, email, password, department) => {
-    const res = await api.post('/auth/register', { name, email, password, department });
-    localStorage.setItem('token', res.data.token);
-    localStorage.setItem('user', JSON.stringify(res.data.user));
+  const register = useCallback(async (payload) => {
+    const res = await api.post('/auth/register', payload);
+    setAccessToken(res.data.accessToken);
     setUser(res.data.user);
     return res.data.user;
-  };
+  }, []);
 
-  const updateUser = (updatedUser) => {
-    const merged = { ...user, ...updatedUser };
-    localStorage.setItem('user', JSON.stringify(merged));
-    setUser(merged);
-  };
-
-  const logout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+  const logout = useCallback(async () => {
+    try {
+      await api.post('/auth/logout');
+    } catch {
+      // Even if the network call fails, clear local session state.
+    }
+    setAccessToken(null);
     setUser(null);
+  }, []);
+
+  const updateUser = useCallback((updatedUser) => {
+    setUser((current) => ({ ...current, ...updatedUser }));
+  }, []);
+
+  const value = {
+    user,
+    booting,
+    login,
+    register,
+    logout,
+    updateUser,
+    isAdmin: user?.role === 'admin',
+    isReviewer: user?.role === 'admin' || user?.role === 'hr_manager',
   };
 
-  return (
-    <AuthContext.Provider value={{ user, login, register, updateUser, logout }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
 export const useAuth = () => useContext(AuthContext);
-

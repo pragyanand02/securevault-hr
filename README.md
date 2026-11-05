@@ -1,123 +1,272 @@
 # SecureVault HR
-### Employee Management System with Role-Based Access Control & Audit Security
 
-SecureVault HR is a full-stack MERN (MongoDB, Express.js, React.js, Node.js) web application designed to solve common access control and data protection shortcomings in enterprise HR systems. It implements strict Role-Based Access Control (RBAC), field-level AES-256 encryption for sensitive employee data (salary and bank account details), comprehensive audit trail logging, and protection against common web vulnerabilities (XSS, NoSQL injection, brute force).
+**A DPDP-ready Employee Data Trust Layer for Indian SMEs** — not another HRMS.
 
----
-
-## 🌟 Key Features
-
-1. **Role-Based Access Control (RBAC)**:
-   - **Admin**: Complete system overview, full CRUD operations on employee records, decryption privileges for sensitive financial data, leave reviews, and access to security audit trails.
-   - **HR Manager**: Employee directory management and leave approvals with financial fields masked/omitted.
-   - **Employee**: Dedicated portal to view and edit personal profiles, apply for leaves, and track application status.
-
-2. **Security & Field-Level AES-256 Encryption**:
-   - Sensitive fields (`salary`, `bankDetails`) are encrypted at the field level using `AES-256-CBC` prior to database storage.
-   - Decryption keys are isolated to authorized administrator requests.
-
-3. **Immutable Security Audit Trail**:
-   - Comprehensive logging of critical lifecycle actions (`CREATE_EMPLOYEE`, `UPDATE_EMPLOYEE`, `DELETE_EMPLOYEE`, `APPLY_LEAVE`, `LEAVE_APPROVED`, `LEAVE_REJECTED`, `UPDATE_PROFILE`, `CANCEL_LEAVE`).
-   - Search and category filters for audit inspection.
-
-4. **Web Vulnerability Mitigations**:
-   - **NoSQL Injection Sanitization**: Strips dangerous MongoDB operator keys (`$gt`, `$where`, etc.).
-   - **Rate Limiting**: Defends against brute-force login attempts using `express-rate-limit`.
-   - **Input Validation**: Request validation via `express-validator`.
-   - **Password Security**: Passwords salted and hashed with `bcryptjs`.
-
-5. **Analytics Dashboard**:
-   - Visual charts powered by Chart.js (Department Distribution, Leave Status Breakdown, and User Role Breakdown).
+> Most employee-management projects demonstrate CRUD. SecureVault demonstrates **data governance**:
+> authenticated field-level encryption, verifiable consent, a tamper-evident access trail,
+> and data-principal rights a person can actually exercise.
 
 ---
 
-## 🛠️ Technology Stack
+## 1. Why this project exists
 
-- **Frontend**: React.js, Tailwind CSS, Chart.js / `react-chartjs-2`, Vite, React Router v7
-- **Backend**: Node.js, Express.js, Mongoose, JSON Web Tokens (JWT), `bcryptjs`, `crypto` (AES-256)
-- **Database**: MongoDB Atlas
+A 200-person Indian SME typically keeps employee data across spreadsheets, WhatsApp, a payroll
+vendor and an HR portal. That creates four concrete failures:
 
----
+| Failure | What it costs the business |
+|---|---|
+| No consent record tied to a purpose | Cannot prove lawful processing when a data principal or regulator asks |
+| Salary / bank data readable by anyone with DB or admin access | Insider leak, no forensic trail |
+| Audit logs stored as ordinary rows | An operator or attacker can edit them; "immutable" is a claim, not a control |
+| Access/erasure requests handled by email | Days of manual work, no SLA, no evidence |
 
-## 🚀 Getting Started
+India's **Digital Personal Data Protection Act, 2023** (with rules being phased in) puts
+significant obligations on employers as *data fiduciaries*, and penalties for failing to
+implement reasonable security safeguards can reach **₹250 crore**. Large consultancies are
+priced out of an SME's budget. SecureVault is the small, verifiable layer that fills that gap.
 
-### Prerequisites
-- Node.js (v18+)
-- MongoDB Atlas account or local MongoDB instance
-
----
-
-### Backend Setup
-
-1. Navigate to the backend folder:
-   ```bash
-   cd backend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Create a `.env` file based on `.env.example`:
-   ```env
-   PORT=5000
-   MONGO_URI=your_mongodb_connection_string
-   JWT_SECRET=your_jwt_secret_key
-   JWT_EXPIRES_IN=7d
-   AES_SECRET_KEY=your_32_character_aes_secret_key
-   ```
-4. Start the backend server:
-   ```bash
-   npm run dev
-   ```
+**Positioning:** the trust layer that sits beside (or on top of) an HRMS — starting with the
+highest-risk data an SME holds: salary, bank details, identity data and access history.
 
 ---
 
-### Frontend Setup
+## 2. What is actually implemented (not slideware)
 
-1. Open a new terminal and navigate to the frontend folder:
-   ```bash
-   cd frontend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Start the Vite development server:
-   ```bash
-   npm run dev
-   ```
-4. Access the application in your browser at `http://localhost:5173`.
+### 2.1 Authenticated field encryption
+- **AES-256-GCM** for `salary` and `bankDetails` (confidentiality **and** integrity).
+- Fresh 96-bit IV per record; auth tag stored with the ciphertext; AAD binds version + key id.
+- Payload format `v2:<keyId>:<iv>:<tag>:<ciphertext>` enables **key rotation** without a
+  big-bang migration (`scripts/rotate-encryption.js`).
+- Legacy AES-CBC values from v1 are still readable, so no data is lost.
+- **Fail-fast configuration**: the server refuses to start with missing/short secrets
+  (`config/env.js`) instead of silently using a public default.
+
+### 2.2 Tamper-evident audit trail
+- Every event is appended with `sequence`, `prevHash` and `hash = SHA-256(canonical record)`.
+- `GET /api/audit-logs/verify` recomputes the entire chain and reports the first broken link.
+- Application-level append-only guards block update/delete through Mongoose; the chain catches
+  direct database edits (demonstrated by `scripts/tamper-demo.js`).
+- Denormalised actor identity means the trail survives user deletion/anonymisation.
+
+### 2.3 Sensitive-read logging
+- Viewing the employee directory and **every decryption** of salary/bank fields creates an
+  audit event (`SENSITIVE_FIELDS_DECRYPTED`, severity `critical`) with actor, role, IP,
+  user agent, target ids and whether access came through a grant.
+
+### 2.4 Consent register + data-principal rights (DPDP)
+- Seven purposes: `core_hr`, `payroll`, `statutory_compliance`, `benefits`,
+  `background_verification`, `analytics`, `marketing`.
+- Each consent records lawful basis, mandatory flag, notice version, grant/withdraw time,
+  IP, user agent and evidence string.
+- Mandatory purposes (contract / legal obligation) cannot be withdrawn while employed;
+  optional purposes can be withdrawn anytime.
+- **My Data** page: data inventory, purpose + retention per field, consent toggles,
+  JSON export, correction / erasure / grievance requests, access matrix, recent audit events
+  about the user.
+- Erasure respects **statutory payroll retention**: the request is recorded with a legal hold
+  and only anonymised after the retention window.
+
+### 2.5 ABAC + just-in-time elevation
+- RBAC alone is not enough: an HR manager is additionally scoped to **their own department**.
+- Employees can read only themselves.
+- Salary/bank fields are **masked** for HR by default. Sensitive access requires a
+  reason-bearing, admin-approved grant that **expires automatically** (5–480 minutes).
+- An admin cannot approve their own request; a manager cannot review their own leave.
+- Employees cannot change their own department (prevents scope escalation).
+
+### 2.6 Session and transport hardening
+- Short-lived **access token kept in memory** (never localStorage) — an XSS payload cannot
+  read a persistent token.
+- **httpOnly, SameSite=Lax refresh cookie** scoped to `/api/auth`, with **rotation on every
+  refresh** and reuse rejection.
+- **`tokenVersion` revocation**: password change, role change, deactivation, deletion and
+  soft delete invalidate existing sessions immediately.
+- Account lockout after repeated failed logins; all auth events are audit-logged.
+- Helmet, CORS allowlist, request body limit, rate limits (API, login, register, sensitive
+  actions), NoSQL/prototype-pollution sanitisation, central error handler.
+- Soft delete + retention date instead of destructive deletion; admin restore endpoint.
+
+### 2.7 Evidence, not claims
+- `backend/tests/` — 14 unit tests for crypto, hash chain and authorisation policy.
+- `backend/scripts/smoke.js` — 20 end-to-end checks against a running API.
+- `backend/scripts/tamper-demo.js` — edits an audit row directly in MongoDB and proves
+  verification fails.
+- `docs/SECURITY.md` — STRIDE threat model, OWASP Top 10 mapping, explicit limitations.
 
 ---
 
-## 🔒 API Endpoints
+## 3. Architecture
 
-### Authentication (`/api/auth`)
-- `POST /api/auth/register` — Public employee registration
-- `POST /api/auth/login` — Rate-limited authentication
+```
+┌────────────────────────────────────────────────────────────────────┐
+│ React SPA (Vite + Tailwind)                                        │
+│  Login · Dashboard · Employees · Leaves · My Data · Security Center│
+│  Access token in memory  +  httpOnly refresh cookie                │
+└──────────────────────────────┬─────────────────────────────────────┘
+                               │ HTTPS / JSON
+┌──────────────────────────────▼─────────────────────────────────────┐
+│ Express API                                                        │
+│  helmet · CORS allowlist · rate limits · sanitisation · errors     │
+│                                                                    │
+│  auth ──► tokenService (access + rotating refresh, tokenVersion)   │
+│  rbac ──► policy.js (role + department + self + separation of duty)│
+│  jit  ──► AccessGrant (reason, approver, expiry)                   │
+│  priv ──► Consent + DataRequest (DSAR, legal hold, 30-day SLA)     │
+│  audit──► auditChain (sequence + prevHash + SHA-256)               │
+│  crypto─► AES-256-GCM (per-record IV, auth tag, key id)            │
+└──────────────────────────────┬─────────────────────────────────────┘
+                               │
+                     ┌─────────▼─────────┐
+                     │ MongoDB Atlas     │
+                     │ users (encrypted) │
+                     │ auditlogs (chain) │
+                     │ consents, requests│
+                     └───────────────────┘
+```
 
-### Employees (`/api/employees`)
-- `GET /api/employees/me` — Authenticated user's profile
-- `PUT /api/employees/me` — Employee self-profile update
-- `GET /api/employees` — List all employees (*Admin, HR Manager*)
-- `POST /api/employees` — Create new employee record (*Admin only*)
-- `PUT /api/employees/:id` — Update employee record (*Admin, HR Manager*)
-- `DELETE /api/employees/:id` — Delete employee record (*Admin only*)
-
-### Leaves (`/api/leaves`)
-- `POST /api/leaves` — Submit leave application
-- `GET /api/leaves/me` — View personal leave history
-- `DELETE /api/leaves/:id` — Cancel pending leave application
-- `GET /api/leaves` — View all leave applications (*Admin, HR Manager*)
-- `PUT /api/leaves/:id/review` — Approve or reject leave request (*Admin, HR Manager*)
-
-### Audit Logs (`/api/audit-logs`)
-- `GET /api/audit-logs` — Fetch system audit records (*Admin only*)
-
-### Analytics (`/api/analytics`)
-- `GET /api/analytics/summary` — Aggregate department, role, and leave statistics (*Admin, HR Manager*)
+Trust boundaries: browser is untrusted; the API is the only writer; the database is treated as
+**potentially compromised or operator-tampered** (hence the chain). Key material lives in the
+environment today and is designed to move to a KMS/HSM (see roadmap).
 
 ---
 
-## 📄 License
-Academic & Educational Project — National Institute of Technology (NIT), Raipur.
+## 4. Quick start
+
+**Prerequisites:** Node.js 20+, a MongoDB connection string.
+
+```bash
+# 1. Backend
+cd backend
+npm install
+copy .env.example .env        # Windows (cp on macOS/Linux)
+# set MONGO_URI, then generate secrets:
+node -e "console.log('JWT_SECRET=' + require('crypto').randomBytes(48).toString('base64url'))"
+node -e "console.log('JWT_REFRESH_SECRET=' + require('crypto').randomBytes(48).toString('base64url'))"
+node -e "console.log('AES_SECRET_KEY=' + require('crypto').randomBytes(48).toString('base64url'))"
+
+npm run seed:reset            # demo accounts + data + audit chain
+npm run dev                   # http://localhost:5000
+
+# 2. Frontend (new terminal)
+cd frontend
+npm install
+npm run dev                   # http://localhost:5173
+```
+
+The backend **fails fast** if `JWT_SECRET`, `JWT_REFRESH_SECRET` or `AES_SECRET_KEY` are missing
+or shorter than 32 characters. That is intentional.
+
+### Demo accounts — password `Demo@2026!`
+
+| Email | Role | Department | Demonstrates |
+|---|---|---|---|
+| `admin@securevault.demo` | Admin | Leadership | Full scope, decryption logging, Security Center, DSAR admin |
+| `hr@securevault.demo` | HR Manager | Engineering | Department-only scope, masked salary, JIT request |
+| `hr.finance@securevault.demo` | HR Manager | Finance | Independent department scope |
+| `neha@securevault.demo` | Employee | Engineering | Self-service, My Data, export / erasure |
+| `kabir@securevault.demo` | Employee | Engineering | Peer employee (invisible to other employees) |
+| `ananya@securevault.demo` | Employee | Finance | Cross-department isolation |
+| `vikram@securevault.demo` | Employee | Sales | Seeded erasure request under legal hold |
+| `meera@securevault.demo` | Employee | Engineering | Additional directory data |
+
+---
+
+## 5. API surface
+
+| Area | Endpoints |
+|---|---|
+| Auth | `POST /api/auth/register`, `/login`, `/refresh`, `/logout`; `GET /me`; `PUT /password` |
+| Employees | `GET /api/employees` (paged + search), `POST /`; `GET/PUT /me`; `GET/PUT /:id`; `DELETE /:id` (soft); `POST /:id/restore` |
+| Leaves | `GET /api/leaves` (scoped), `GET /me`, `GET /summary`; `POST /`; `DELETE /:id`; `PUT /:id/review` |
+| Audit | `GET /api/audit-logs` (filters + pagination), `GET /verify`, `GET /stats` |
+| Analytics | `GET /api/analytics/summary` (department-scoped) |
+| Privacy | `GET /api/privacy/me`, `PUT /consents`, `GET /me/export`, `POST /erasure`, `POST /requests`, `GET /requests/me`, `GET /access-matrix`; admin: `GET /requests`, `PUT /requests/:id`, `GET /stats` |
+| Access | `POST /api/access/requests`, `GET /requests/me`, `GET /active`; admin: `GET /requests`, `PUT /requests/:id/review`, `DELETE /requests/:id` |
+| Health | `GET /api/health` (encryption + chain state) |
+
+Employee list response shape:
+
+```json
+{
+  "data": [
+    {
+      "id": "...", "name": "Neha Iyer", "email": "neha@securevault.demo",
+      "role": "employee", "department": "Engineering",
+      "salary": "••••••", "salaryMasked": true,
+      "bankDetails": "••••••", "bankDetailsMasked": true,
+      "sensitiveAccessViaGrant": false, "isActive": true, "isDeleted": false
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 8, "pages": 1 },
+  "access": { "sensitiveMasked": true, "viaGrant": false, "scope": "Engineering" }
+}
+```
+
+Audit list response shape:
+
+```json
+{
+  "data": [ { "sequence": 12, "action": "SENSITIVE_FIELDS_DECRYPTED", "actorName": "...", "hash": "...", "prevHash": "..." } ],
+  "pagination": { "page": 1, "limit": 50, "total": 18, "pages": 1 },
+  "chain": { "sequence": 18, "lastHash": "...", "totalRecords": 18 }
+}
+```
+
+---
+
+## 6. Testing and evidence
+
+```bash
+cd backend
+npm test               # 14 unit tests (node --test)
+npm run seed:reset     # clean demo data
+npm run smoke          # 20 end-to-end checks (server must be running)
+npm run tamper:demo    # proves the audit chain detects edits, then reseed
+npm run rotate:encryption  # re-encrypt with the active key id
+```
+
+`npm run tamper:demo` output (expected):
+
+```
+Before tampering: valid=true (18 records)
+Tampered with audit record sequence=8 (action=SENSITIVE_FIELDS_DECRYPTED)
+After tampering:  valid=false
+Detected at sequence 8: Hash mismatch: this record was altered after it was written
+```
+
+After running it, **always** run `npm run seed:reset` before a demo.
+
+---
+
+## 7. Documentation
+
+- [`docs/SECURITY.md`](docs/SECURITY.md) — threat model (STRIDE), controls, OWASP mapping, crypto/audit design, limitations.
+- [`docs/DPDP.md`](docs/DPDP.md) — DPDP obligation-to-implementation mapping, consent model, DSAR lifecycle, retention.
+- [`docs/DEMO.md`](docs/DEMO.md) — 6-minute demo script with exact clicks and expected output.
+- [`docs/PRESENTATION.md`](docs/PRESENTATION.md) — 10-slide narrative, metrics, likely viva questions and answers.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — what is deliberately deferred (KMS, WebAuthn, multi-tenancy, post-quantum, private RAG).
+
+---
+
+## 8. Honest limitations
+
+- The audit chain is **tamper-evident, not tamper-proof**: an attacker with DB access can delete
+  the newest records; the chain proves *that* records were altered but cannot prevent it.
+  External anchoring (Merkle root published to an append-only log) is roadmap work.
+- Chain appends are serialised **in-process**; a multi-instance deployment needs a distributed
+  lock or transactional counter.
+- Encryption keys live in the environment today (no KMS/HSM yet).
+- Access tokens are held in JS memory, which mitigates — not eliminates — XSS.
+- `DPDP.md` maps controls to the Act; it is **not legal advice** and specific Rules/timelines
+  should be verified against the latest official notification before citing them.
+- No WebAuthn passkeys, no multi-tenancy, no differential privacy yet — deliberately deferred
+  and documented.
+
+---
+
+## 9. Academic context
+
+Final-year project. The contribution is not "an HRMS"; it is a **reference implementation of
+employee-data trust controls** that can be evaluated against a regulation, a threat model and
+a measurable demo. Built with Node.js, Express, MongoDB, Mongoose, React, Vite, Tailwind CSS,
+Chart.js and Node's built-in test runner.

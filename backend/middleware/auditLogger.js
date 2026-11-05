@@ -1,10 +1,41 @@
-const AuditLog = require('../models/AuditLog');
+const { appendAudit } = require('../utils/auditChain');
+const { getClientIp, getUserAgent } = require('../utils/request');
 
-// Call this helper inside controllers after a sensitive action succeeds
-exports.logAction = async (userId, action, targetId, details = '') => {
+// Single entry point for every audit event.
+// Never pass raw salary/bank values in `details` or `metadata` - log field names
+// and record ids, not the protected data itself.
+exports.logEvent = async ({
+  req,
+  actor,
+  action,
+  category = 'SYSTEM',
+  severity = 'info',
+  targetId = null,
+  targetType = null,
+  details = '',
+  metadata = {},
+}) => {
+  const current = actor || req?.user || null;
+
   try {
-    await AuditLog.create({ user: userId, action, targetId, details });
+    return await appendAudit({
+      actor: current?.id || null,
+      actorName: current?.name || 'System',
+      actorEmail: current?.email || null,
+      actorRole: current?.role || 'system',
+      action,
+      category,
+      severity,
+      targetId,
+      targetType,
+      details,
+      metadata,
+      ip: req ? getClientIp(req) : null,
+      userAgent: req ? getUserAgent(req) : null,
+    });
   } catch (error) {
-    console.log('Audit log error:', error.message);
+    // Audit failure must be visible in logs, but should not crash the request.
+    console.error('AUDIT LOG FAILURE:', error.message);
+    return null;
   }
 };
