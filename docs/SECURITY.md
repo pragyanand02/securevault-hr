@@ -54,7 +54,7 @@ Likelihood/impact are qualitative for a small-SME deployment.
 | 2 | Spoofing | Stolen access token replayed | 15-min access token, DB re-check on every request, `tokenVersion` revocation, httpOnly refresh cookie | Token valid until expiry if stolen from memory |
 | 3 | Spoofing | Forged/`alg:none` JWT | `jsonwebtoken.verify` with fixed secret, `type` claim checked (`access` vs `refresh`), issuer/audience set | Signing-key compromise defeats this (KMS roadmap) |
 | 4 | **Tampering** | Admin edits salary directly in MongoDB | AES-256-GCM auth tag rejects modified ciphertext (`utils/encryption.js`); failed decrypt is logged and returns `null` | Attacker with the key can re-encrypt |
-| 5 | Tampering | Operator edits/deletes audit rows to hide an action | SHA-256 hash chain + sequence + `prevHash`; `GET /api/audit-logs/verify` detects the first broken link; Mongoose update/delete guards | Newest rows can be deleted; no external anchor yet |
+| 5 | Tampering | Operator edits/deletes audit rows to hide an action | SHA-256 hash chain + sequence + `prevHash`; `GET /api/audit-logs/verify` detects the first broken link; Merkle-root anchor receipts detect truncation | Newest rows can be deleted only if the published anchor is also rewritten; external publication is deployment work |
 | 6 | Tampering | Mass-assignment (`role: "admin"`, `department`) on profile update | Field allow-lists in controllers; self-service cannot change role/department; role changes revoke sessions | — |
 | 7 | Tampering | NoSQL operator injection (`{"$gt": ""}`) | `express-mongo-sanitize`-style sanitiser + `express-validator` on auth/employee/leave inputs | New endpoints must remember validators |
 | 8 | **Repudiation** | "I never viewed that salary record" | `SENSITIVE_FIELDS_DECRYPTED` critical event with actor, role, IP, UA, target ids, grant flag; append-only trail | IP can be spoofed behind a proxy if trust config is wrong |
@@ -154,10 +154,10 @@ Failure returns `valid: false`, `brokenAtSequence` and a human-readable reason.
 middle row creates a sequence gap; reordering breaks `prevHash`.
 
 **Does not:** prevent an attacker with database access from deleting the newest rows and rolling
-the head back. That is why this is called *tamper-evident*, not *tamper-proof*. The roadmap item
-that closes this is **external anchoring**: periodically publish the chain head (or a Merkle root)
-to an append-only store outside the database (S3 Object Lock, an RFC 3161 timestamp, or a public
-transparency log).
+the head back. That is why this is called *tamper-evident*, not *tamper-proof*. The project now
+emits a **Merkle-root anchor receipt** (§4.6); publishing that receipt outside the database
+(S3 Object Lock, an RFC 3161 timestamp, or a public transparency log) closes the truncation gap.
+The receipt workflow is implemented; automated publication is deployment work.
 
 ### 4.5 Operational notes
 
@@ -167,6 +167,29 @@ transparency log).
   windows and anchor each window's head.
 - Audit failure is logged to stderr but does not crash the request (`auditLogger.js`). In
   production this should page an operator instead.
+
+### 4.6 Anchor receipts (closing the truncation gap)
+
+`GET /api/audit-logs/anchor` (admin) and `npm run anchor:chain` produce a portable receipt:
+
+```json
+{
+  "anchorFormat": "securevault-anchor-v1",
+  "sequenceFrom": 1,
+  "sequenceTo": 42,
+  "recordCount": 42,
+  "merkleRoot": "<64 hex chars>",
+  "chainValid": true
+}
+```
+
+- The Merkle root commits to every record hash in the range, so one 32-byte value proves the
+  state of the trail.
+- `npm run anchor:verify -- <receipt.json>` recomputes the root and re-verifies the chain.
+  A tampered or truncated trail returns `ANCHOR MISMATCH`.
+- The remaining step is **publication**: commit the receipt, or push it to S3 Object Lock /
+  an RFC 3161 timestamp, so a database operator cannot rewrite both the data and the anchor.
+  The receipt workflow is implemented; only the external store is deployment work.
 
 ---
 
@@ -243,7 +266,7 @@ Additional rules enforced in code:
 |---|---|---|
 | A01 Broken Access Control | Central ABAC policy, server-side scoping, self/role/department checks, admin-only audit & DSAR routes, 403 on cross-scope ids | No automated authorisation matrix test for every route yet |
 | A02 Cryptographic Failures | AES-256-GCM with per-record IV + auth tag + AAD; bcrypt(12); secrets fail-fast; legacy CBC read-only | Keys in env, no KMS/HSM |
-| A03 Injection | Mongoose parameterisation, `express-validator`, `$`/dot/prototype sanitiser, no string-built queries | Regex search input should be escaped (see limitations) |
+| A03 Injection | Mongoose parameterisation, `express-validator`, `$`/dot/prototype sanitiser, regex metacharacters escaped before building search filters | New endpoints must remember validators |
 | A04 Insecure Design | Threat model, least privilege, separation of duties, JIT access, legal hold, explicit limitations | No formal abuse-case review each sprint |
 | A05 Security Misconfiguration | Helmet, CORS allow-list, env validation, `secure` cookies in prod, no default secrets | Deployment checklist is manual |
 | A06 Vulnerable Components | Small dependency set; `npm run security:audit` (`npm audit --omit=dev`) | No automated Dependabot/Snyk in CI |
@@ -258,22 +281,24 @@ Additional rules enforced in code:
 
 | Command | What it proves |
 |---|---|
-| `npm test` (backend) | 14 unit tests: GCM round-trip/tamper rejection/key-id, hash-chain determinism and break detection, ABAC policy decisions |
-| `npm run smoke` | 20 end-to-end checks against a running API: login, scoping, masking, JIT, DSAR, audit verify |
+| `npm test` (backend) | 24 unit tests: GCM round-trip/tamper rejection/key-id, hash-chain determinism and break detection, Merkle-root determinism and order-sensitivity, retention eligibility, ABAC policy decisions |
+| `npm run smoke` | 23 end-to-end checks against a running API: login, scoping, masking, JIT, DSAR, audit verify, anchor receipt, compliance pack |
 | `npm run tamper:demo` | Edits an audit row directly in MongoDB and shows verification fail at that sequence |
+| `npm run anchor:chain` + `anchor:verify` | Produces a Merkle-root receipt, then re-checks it; a tampered trail returns `ANCHOR MISMATCH` |
+| `npm run retention:run` / `retention:apply` | Dry-run and apply the retention sweep; anonymises only records past their statutory window |
 | `npm run seed:reset` | Restores a clean, deterministic demo state |
 | `npm run rotate:encryption` | Re-encrypts rows with the active key id (rotation runbook) |
-| `npm run build` (frontend) | Production build compiles; lint is clean apart from two documented warnings |
+| `npm run build` (frontend) | Production build compiles; lint is clean apart from one documented warning |
 
-The tamper demo is the strongest viva artefact: it converts "we have audit logs" into "we can
-prove an edit happened".
+The tamper demo and the anchor proof are the strongest viva artefacts: they convert
+"we have audit logs" into "we can prove an edit happened and a receipt covers the trail".
 
 ---
 
 ## 10. Known limitations (and the roadmap that fixes them)
 
-1. **Tamper-evident, not tamper-proof** — no external anchor. → Merkle root published to an
-   append-only log / RFC 3161 timestamp.
+1. **Tamper-evident, not tamper-proof** — anchor receipts exist; automated publication to an
+   append-only store remains. → Publish the Merkle root to S3 Object Lock / an RFC 3161 timestamp.
 2. **Single-instance chain lock** — in-process queue. → Redis/Postgres advisory lock or a
    transactional outbox.
 3. **Keys in environment** — → AWS KMS / HashiCorp Vault envelope encryption, per-tenant data keys.
@@ -282,8 +307,8 @@ prove an edit happened".
    policy, or database-per-tenant.
 6. **No SIEM integration** — → ship critical events to CloudWatch/Loki and alert on chain
    verification failure or sensitive-read spikes.
-7. **Search uses a regex built from user input** — → escape regex metacharacters or use a text
-   index (small, known follow-up).
+7. **Retention needs a scheduler** — the sweep is runnable (`npm run retention:apply`) but not yet
+   scheduled in the deployment. → cron/worker with alerting on failure.
 8. **No CSP tuning for the SPA** — Helmet's default CSP may need explicit asset/connect sources.
 9. **Audit verification is capped at 10k records per call** — → windowed verification with anchors.
 10. **Rate-limit store is in-memory** — → Redis store for multi-instance deployments.

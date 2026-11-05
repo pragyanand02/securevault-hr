@@ -87,10 +87,15 @@ highest-risk data an SME holds: salary, bank details, identity data and access h
 - Soft delete + retention date instead of destructive deletion; admin restore endpoint.
 
 ### 2.7 Evidence, not claims
-- `backend/tests/` — 14 unit tests for crypto, hash chain and authorisation policy.
-- `backend/scripts/smoke.js` — 20 end-to-end checks against a running API.
+- `backend/tests/` — 24 unit tests for crypto, hash chain, Merkle anchoring, retention
+  eligibility and authorisation policy.
+- `backend/scripts/smoke.js` — 23 end-to-end checks against a running API (including the
+  anchor receipt and compliance pack).
 - `backend/scripts/tamper-demo.js` — edits an audit row directly in MongoDB and proves
   verification fails.
+- `backend/scripts/anchor-chain.js` — publishes a Merkle-root receipt and later proves whether
+  the trail still matches it.
+- `backend/scripts/retention-run.js` — dry-run/apply retention sweep with audit events.
 - `docs/SECURITY.md` — STRIDE threat model, OWASP Top 10 mapping, explicit limitations.
 
 ---
@@ -218,10 +223,14 @@ Audit list response shape:
 
 ```bash
 cd backend
-npm test               # 14 unit tests (node --test)
+npm test               # 24 unit tests (node --test)
 npm run seed:reset     # clean demo data
-npm run smoke          # 20 end-to-end checks (server must be running)
+npm run smoke          # 23 end-to-end checks (server must be running)
 npm run tamper:demo    # proves the audit chain detects edits, then reseed
+npm run anchor:chain   # publish a Merkle-root receipt for the current chain
+npm run anchor:verify -- "..\docs\anchors\chain-anchor-000006.json"
+npm run retention:run  # dry run: who is past retention, which DSARs are overdue
+npm run retention:apply    # anonymise records whose retention window ended
 npm run rotate:encryption  # re-encrypt with the active key id
 ```
 
@@ -242,7 +251,7 @@ After running it, **always** run `npm run seed:reset` before a demo.
 
 - [`docs/SECURITY.md`](docs/SECURITY.md) — threat model (STRIDE), controls, OWASP mapping, crypto/audit design, limitations.
 - [`docs/DPDP.md`](docs/DPDP.md) — DPDP obligation-to-implementation mapping, consent model, DSAR lifecycle, retention.
-- [`docs/DEMO.md`](docs/DEMO.md) — 6-minute demo script with exact clicks and expected output.
+- [`docs/DEMO.md`](docs/DEMO.md) — 7–8 minute demo script with exact clicks and expected output.
 - [`docs/PRESENTATION.md`](docs/PRESENTATION.md) — 10-slide narrative, metrics, likely viva questions and answers.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — what is deliberately deferred (KMS, WebAuthn, multi-tenancy, post-quantum, private RAG).
 
@@ -252,11 +261,14 @@ After running it, **always** run `npm run seed:reset` before a demo.
 
 - The audit chain is **tamper-evident, not tamper-proof**: an attacker with DB access can delete
   the newest records; the chain proves *that* records were altered but cannot prevent it.
-  External anchoring (Merkle root published to an append-only log) is roadmap work.
+  The app can now emit a Merkle-root anchor receipt (`npm run anchor:chain`) that can be
+  published outside MongoDB; automated publication to an append-only log is roadmap work.
 - Chain appends are serialised **in-process**; a multi-instance deployment needs a distributed
   lock or transactional counter.
 - Encryption keys live in the environment today (no KMS/HSM yet).
 - Access tokens are held in JS memory, which mitigates — not eliminates — XSS.
+- Retention is enforced by a runnable sweep (`npm run retention:apply`), not yet by a scheduler
+  in the deployment.
 - `DPDP.md` maps controls to the Act; it is **not legal advice** and specific Rules/timelines
   should be verified against the latest official notification before citing them.
 - No WebAuthn passkeys, no multi-tenancy, no differential privacy yet — deliberately deferred

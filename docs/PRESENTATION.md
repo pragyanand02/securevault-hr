@@ -148,6 +148,7 @@ portability; CSFLE/KMS is the production hardening path."
 - Append-only guards in Mongoose
 - `GET /api/audit-logs/verify` recomputes the whole chain
 - Detects: edits (hash mismatch), deletion (sequence gap), reordering (`prevHash` break)
+- **Merkle-root anchor receipt** commits to the whole trail (`GET /api/audit-logs/anchor`)
 - **Tamper-evident, not tamper-proof** — stated on the slide
 
 **Demo (the money shot):** run `npm run tamper:demo`.
@@ -161,8 +162,9 @@ Detected at X: Hash mismatch: this record was altered after it was written
 ```
 
 **Say:** "This is the difference between claiming immutability and proving an edit happened.
-The next step is external anchoring — publish the chain head to an append-only store so even the
-newest rows cannot be silently rolled back."
+The app also emits a Merkle-root anchor receipt for the trail; publishing that one small file
+outside the database closes the truncation gap. Automated publication is the remaining deployment
+step, and it is on the roadmap."
 
 ---
 
@@ -212,9 +214,11 @@ withdrew."
 
 | Metric | Value |
 |---|---|
-| Unit tests (`node --test`) | 14 / 14 |
-| End-to-end smoke checks | 20 / 20 |
+| Unit tests (`node --test`) | 24 / 24 |
+| End-to-end smoke checks | 23 / 23 |
 | Tamper detection | verified at the edited sequence |
+| Anchor receipt after tampering | `ANCHOR MISMATCH` |
+| Compliance pack | counts, chain proof, access matrix |
 | Roles / demo accounts | 3 / 8 |
 | Consent purposes | 7 |
 | DSAR types | 4 |
@@ -228,7 +232,7 @@ withdrew."
 
 - KMS/HSM-backed keys (env today, rotation supported)
 - WebAuthn/passkeys (highest-value accounts first)
-- External anchoring of the chain head (closes truncation)
+- Automated publication of anchor receipts (receipts are generated and verified)
 - Multi-tenancy, SIEM alerting, breach workflow
 - Post-quantum envelope encryption, private RAG, differential privacy
 
@@ -249,6 +253,9 @@ rewritten, and let the person exercise their rights."
 |---|---|
 | AES-256-GCM + rotation | `backend/utils/encryption.js` |
 | Hash chain + verify | `backend/utils/auditChain.js` |
+| Merkle anchor receipt | `backend/utils/auditChain.js`, `backend/scripts/anchor-chain.js` |
+| Retention sweep | `backend/services/retentionService.js`, `backend/scripts/retention-run.js` |
+| Compliance evidence pack | `backend/controllers/privacyController.js` |
 | Append-only guards | `backend/models/AuditLog.js` |
 | RBAC/ABAC matrix | `backend/utils/policy.js` |
 | JWT + refresh rotation | `backend/services/tokenService.js`, `controllers/authController.js` |
@@ -267,14 +274,14 @@ rewritten, and let the person exercise their rights."
    One fiduciary, no consortium consensus needed. A hash chain + external anchor is cheaper and
    sufficient. Blockchain would add operational cost without closing a real threat here.
 3. **"Can an attacker delete the audit trail?"**
-   Newest rows, yes — hence "tamper-evident". Middle-row edits/deletes are detected. External
-   anchoring is the next step.
+   Newest rows, yes — hence "tamper-evident". Middle-row edits/deletes are detected. Anchor
+   receipts commit to the trail; publishing them externally is the remaining deployment step.
 4. **"Is the admin trusted?"**
    The admin can decrypt, but every read is a critical event, and HR cannot read the audit trail.
    Dual control / break-glass approval is roadmap.
 5. **"How do you handle an employee leaving?"**
    Soft delete + `retentionUntil`; login disabled, tokenVersion bumped; erasure deferred until
-   statutory retention ends, then anonymisation.
+   statutory retention ends, then the retention sweep anonymises (dry-run/apply CLI).
 6. **"What about backups?"**
    Erasure covers the live record; cryptographic erasure of backups (per-tenant keys) is roadmap.
    Stated as a limitation.
@@ -312,8 +319,22 @@ Show, in this order:
 
 1. `docs/SECURITY.md` threat model table (STRIDE).
 2. `docs/DPDP.md` obligation map.
-3. `npm test` output (14/14) and `npm run smoke` output (20/20) from the terminal.
+3. `npm test` output (24/24) and `npm run smoke` output (23/23) from the terminal.
 4. The tamper-demo transcript in `docs/DEMO.md`.
 5. The architecture diagram on slide 5.
 
 Do not debug live in front of the panel; narrate the design and the evidence you already have.
+
+### B5 — Anchor + retention quick reference (if asked "show me")
+
+```powershell
+cd backend
+npm.cmd run anchor:chain                 # creates docs/anchors/chain-anchor-XXXXXX.json
+npm.cmd run anchor:verify -- "..\docs\anchors\chain-anchor-XXXXXX.json"
+npm.cmd run retention:run                # dry run: eligible records + overdue DSARs
+npm.cmd run retention:apply              # anonymise only after the statutory window
+```
+
+Expected anchor output before tampering: `RESULT: ANCHOR MATCHES`.
+After `npm.cmd run tamper:demo`: `RESULT: ANCHOR MISMATCH` with `Chain valid: false`.
+Always `npm.cmd run seed:reset` afterwards.

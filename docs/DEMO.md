@@ -1,4 +1,4 @@
-# 7-Minute Demo Script — SecureVault HR
+# 7–8 Minute Demo Script — SecureVault HR
 
 > Goal: prove **motive → handling → usefulness** in one pass.
 > Every claim on a slide is followed by a click that shows the control working.
@@ -13,8 +13,8 @@ cd backend
 npm.cmd run seed:reset
 
 # 2. Optional but recommended: prove the test suite first (keep the output visible)
-npm.cmd test          # 14/14
-npm.cmd run smoke     # 20/20 (backend must be running)
+npm.cmd test          # 24/24
+npm.cmd run smoke     # 23/23 (backend must be running)
 
 # 3. Re-seed after smoke, because smoke changes consent + DSAR state
 npm.cmd run seed:reset
@@ -50,7 +50,7 @@ npm.cmd run dev       # http://localhost:5173
 
 ---
 
-## 1. The 7-minute run sheet
+## 1. The 7–8 minute run sheet
 
 | Time | Beat | What the audience sees |
 |---|---|---|
@@ -58,9 +58,12 @@ npm.cmd run dev       # http://localhost:5173
 | 0:40–2:00 | Employee: My Data + rights | Inventory, consent, export, erasure with legal hold |
 | 2:00–3:10 | HR: least privilege | Only 4 Engineering employees, salary masked, JIT request |
 | 3:10–4:10 | Admin: approve + evidence | Grant approved, HR sees salary, audit shows who/why |
-| 4:10–5:10 | Security Center | Chain verify, sensitive-read count, DSAR queue |
-| 5:10–6:20 | Tamper demo | "An engineer edits the audit row; verification fails." |
-| 6:20–7:00 | Limits + roadmap | Name what is *not* built; close on usefulness |
+| 4:10–5:10 | Security Center | Chain verify, anchor receipt, compliance pack, DSAR queue |
+| 5:10–6:40 | Tamper demo + anchor proof | "An engineer edits the audit row; verification and the receipt both fail." |
+| 6:40–7:20 | Limits + roadmap | Name what is *not* built; close on usefulness |
+
+> If you are running long, drop the second HR login in beat 4 (the audit event still proves the
+> approval) and skip the optional retention dry run in beat 5. Never skip beat 6.
 
 ---
 
@@ -131,20 +134,31 @@ Now switch back to HR to show the grant working:
 > If you are short on time, skip the second HR login: the audit event already proves the approval.
 > The visual flip is worth it if you have 20 seconds.
 
-### Beat 5 — Security Center: evidence dashboard (45 s)
+### Beat 5 — Security Center: evidence dashboard (60 s)
 
 Back as `admin@securevault.demo` → **Security Center**.
 
 1. Point at metrics: **Audit events**, **Sensitive reads (24h)**, **Failed logins (24h)**, **Open DSARs**.
 2. Under **Audit chain integrity**, click **Verify chain now**.
    - Expected green: **INTACT · no tampering detected** + "N record(s) recomputed and matched."
-3. Scroll to **Data-principal requests (DSAR)**.
+3. Click **Download anchor receipt**.
+   - Say: "This is a Merkle root over every audit hash. Publish this one small file outside the
+     database and even deleting the newest rows becomes detectable."
+   - Keep the downloaded file path visible; it is used in beat 6.
+4. Click **Download compliance pack** (header button).
+   - Say: "One JSON file an auditor can read: chain verification, consent coverage, DSAR SLA,
+     access matrix, and the list of known limitations. No salary or bank contents."
+5. Scroll to **Data-principal requests (DSAR)**.
    - Point at Vikram's erasure request: **legal hold (statutory retention)**.
    - Click **Start review**, then **Defer (legal hold)** → note: "Retained until statutory window ends".
    - Say: "The system will not anonymise an active employee record. Deferring keeps the obligation visible."
-4. Point at **Control summary** — the last tile is **Known limits**, not a marketing claim.
+6. Point at **Control summary** — the last tile is **Known limits**, not a marketing claim.
 
-### Beat 6 — Tamper demo: the money shot (70 s)
+> Optional 20 s: in the terminal run `npm.cmd run retention:run` to show the dry-run sweep
+> (eligible records = 0 in the demo seed, overdue DSARs listed). `retention:apply` performs the
+> anonymisation; do not run it during the demo unless you intend to reseed.
+
+### Beat 6 — Tamper demo: the money shot (90 s)
 
 Keep the Security Center open. In the terminal:
 
@@ -168,6 +182,15 @@ exactly what an operator or an attacker with database access would do. The chain
 Back in the browser: **Security Center → Verify chain now** → red **TAMPERING DETECTED** with the
 sequence number. Then **Audit Log → Verify integrity** for the same result on the full trail.
 
+Then prove the anchor receipt is not theatre:
+
+```powershell
+npm.cmd run anchor:verify -- "..\docs\anchors\chain-anchor-XXXXXX.json"
+```
+
+Expected: `RESULT: ANCHOR MISMATCH` with `Chain valid: false`. Say: "A receipt I produced
+before the tamper can never match again — that is the property an auditor needs."
+
 **Immediately after this beat**, restore the demo state:
 
 ```powershell
@@ -181,10 +204,11 @@ npm.cmd run seed:reset
 Say:
 
 > "What is deliberately not here: KMS/HSM-backed keys, WebAuthn passkeys, multi-tenancy,
-> external anchoring of the chain head, breach-notification automation, and post-quantum
-> envelope encryption. Those are in `docs/ROADMAP.md` with effort and risk, not hidden.
-> The contribution is a working reference implementation of employee-data trust controls that
-> can be evaluated against a regulation, a threat model, and a reproducible demo."
+> automated publication of anchor receipts (generation and verification are built),
+> breach-notification automation, and post-quantum envelope encryption. Those are in
+> `docs/ROADMAP.md` with effort and risk, not hidden. The contribution is a working reference
+> implementation of employee-data trust controls that can be evaluated against a regulation,
+> a threat model, and a reproducible demo."
 
 ---
 
@@ -208,14 +232,15 @@ Say:
 |---|---|
 | "Isn't this just an HRMS?" | "The CRUD is the surface. The contribution is the governance layer: authenticated encryption, evidenced consent, a tamper-evident trail, and enforceable data-principal rights." |
 | "Why not just use MongoDB encryption at rest?" | "At-rest encryption protects the disk, not the operator. It does not stop an admin reading salary in the UI, does not log the read, and does not prove the audit trail is intact. We do field-level encryption plus access policy plus evidence." |
-| "Why a hash chain and not blockchain?" | "There is one fiduciary, not a consortium; consensus adds cost without solving the real threat. A hash chain plus an external anchor gives the same tamper-evidence for this scope. Anchoring is the next roadmap item." |
-| "Can't an attacker delete the audit logs?" | "They can delete the newest rows — that is why we say tamper-evident, not tamper-proof. Editing or removing a middle row breaks the chain. External anchoring closes the truncation gap." |
+| "Why a hash chain and not blockchain?" | "There is one fiduciary, not a consortium; consensus adds cost without solving the real threat. A hash chain plus a published Merkle-root receipt gives the same tamper-evidence for this scope. Receipt generation and verification are built; automated publication is the remaining deployment step." |
+| "Can't an attacker delete the audit logs?" | "They can delete the newest rows — that is why we say tamper-evident, not tamper-proof. Editing or removing a middle row breaks the chain. A Merkle-root anchor receipt commits to the whole trail; if it was published outside the database, truncation is detectable too." |
 | "Where are the keys?" | "In the environment today, with key-id rotation supported. Production moves to KMS/HSM envelope encryption; that is documented as a limitation, not hand-waved." |
 | "Is it DPDP compliant?" | "It implements DPDP-ready controls and maps them to obligations. Compliance also needs legal review, a DPO, breach process and organisational measures. `docs/DPDP.md` lists exactly what is not claimed." |
 | "What happens if HR is malicious?" | "They can only see their department, salary is masked without a reviewed grant, and every sensitive read is a critical audit event. A malicious admin is still an admin — dual control is roadmap." |
-| "How do you know it works?" | "14 unit tests, 20 end-to-end smoke checks, and a tamper demo that edits the database directly and shows verification fail." |
-| "What is the biggest weakness?" | "The chain lock is in-process and keys are in env. Both are known, scoped, and on the roadmap with the same seriousness as the features." |
-| "What would you do with 3 more months?" | "External anchoring, KMS, passkeys, automated retention jobs, CI with authorisation tests, then multi-tenancy." |
+| "How do you know it works?" | "24 unit tests, 23 end-to-end smoke checks, a tamper demo that edits the database directly and shows verification fail, and an anchor receipt that returns ANCHOR MISMATCH after tampering." |
+| "What is the biggest weakness?" | "The chain lock is in-process, keys are in env, and anchor publication is manual. All three are known, scoped, and on the roadmap with the same seriousness as the features." |
+| "What would you do with 3 more months?" | "Publish anchors to an append-only store on a schedule, move keys to KMS, add passkeys for admin/HR, schedule retention and DSAR reminders, then add route-by-route authorisation tests and multi-tenancy." |
+| "Why is the anchor receipt not just a file you can edit?" | "The receipt is only useful if it is published somewhere the DB operator cannot rewrite: a git commit, S3 Object Lock, or an RFC 3161 timestamp. The app produces and verifies it; choosing and automating that store is deployment work. If someone edits both the DB and the receipt, the external store's copy is the tie-breaker." |
 
 ---
 

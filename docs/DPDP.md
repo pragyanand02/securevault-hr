@@ -52,7 +52,7 @@ small SME often has one accountable person — that is a staffing compromise, no
 | **Purpose limitation** | Use data only for the consented/legitimate purpose | Each consent row names one purpose; access matrix states the purpose for salary/bank/leave/audit; sensitive reads are logged with the business reason | `GET /api/privacy/access-matrix`, My Data inventory | Technical purpose enforcement is policy-level, not a per-query label |
 | **Data minimisation** | Collect only what is necessary | Only name, email, role, department, designation, salary, bank, leave; financial fields masked for HR by default | Employee list API masks fields; access matrix | No automated "field ageing" review |
 | **Accuracy** | Reasonable efforts to keep data accurate | Employees can correct name/designation; correction request workflow for other fields; admin edits are audit-logged | `PUT /api/employees/me`, `POST /api/privacy/requests` (correction) | No self-service correction for salary/bank (by design, to avoid fraud) |
-| **Storage limitation** | Retain only as long as necessary | `retentionUntil` on the user; soft delete + retention window; erasure respects legal hold | `User.retentionUntil`, `DataRequest.legalHold`, retention policy in My Data | No automated purge job; retention period is configurable but manual |
+| **Storage limitation** | Retain only as long as necessary | `retentionUntil` on the user; soft delete + retention window; erasure respects legal hold; runnable retention sweep (`retention:apply`) | `User.retentionUntil`, `DataRequest.legalHold`, retention policy in My Data, `RETENTION_PURGED` events | Scheduler not deployed yet; sweep is invoked manually |
 | **Security safeguards** (s.8(5)) | Reasonable technical and organisational measures | AES-256-GCM, bcrypt, JWT hardening, ABAC, JIT, rate limits, sanitisation, audit chain, fail-fast secrets | `docs/SECURITY.md`, tests, tamper demo | No KMS/HSM, no MFA yet |
 | **Breach notification** (s.8(6)) | Notify the Board and affected Data Principals | **Process gap**: the app records failed logins and sensitive reads but does not run a breach workflow | Audit trail supports investigation | Roadmap: incident register, notification templates, 72-hour-style runbook |
 | **Right to access** (s.11) | Summary of personal data processed, identities of processors, and sharing | My Data inventory + machine-readable JSON export with consents, leaves, requests and audit events | `GET /api/privacy/me`, `GET /api/privacy/me/export`; `DATA_EXPORTED` audit event | No processor register in the export yet |
@@ -60,7 +60,7 @@ small SME often has one accountable person — that is a staffing compromise, no
 | **Right to grievance** (s.13) | Accessible grievance redressal, then Board escalation | Grievance request type with 30-day target; My Data shows how to raise it | `DataRequest` type `grievance`, due date, resolution note | No external escalation UI; no published grievance officer contact |
 | **Right to nominate** (s.14) | Nominate someone to exercise rights on death/incapacity | **Not implemented** | — | Roadmap |
 | **Consent withdrawal** | As easy as giving | One toggle per optional purpose; mandatory purposes explain the lawful basis and refuse withdrawal | `PUT /api/privacy/consents`, audit events | Withdrawal does not trigger downstream purge (manual review) |
-| **Accountability** | Demonstrate compliance | Hash-chained audit trail, verification endpoint, access matrix, DSAR SLA metrics | `GET /api/audit-logs/verify`, Security Center | No external anchor; no annual audit pack |
+| **Accountability** | Demonstrate compliance | Hash-chained audit trail, verification endpoint, Merkle-root anchor receipts, access matrix, DSAR SLA metrics, downloadable compliance evidence pack | `GET /api/audit-logs/verify`, `GET /api/audit-logs/anchor`, `GET /api/privacy/compliance-pack`, Security Center | Anchor publication to an external store and an annual audit pack are roadmap |
 | **Cross-border transfer** | Allowed except to notified restricted countries | Not modelled | — | Roadmap: deployment-region policy |
 | **Children** (s.9) | Verifiable parental consent; no behavioural tracking | Employment data assumed 18+; no tracking | — | Interns/minors need a process |
 | **SDF obligations** (s.10) | DPIA, audit, DPO, algorithmic due diligence | Not claimed | — | Roadmap |
@@ -122,7 +122,8 @@ ensureDefaultConsents()  ──► mandatory rows granted, optional rows off
 ```
 pending ──► in_review ──► completed
    │            │
-   └────────────┴────────► rejected (with resolution note)
+   │            ├────────► deferred   (acknowledged, but a legal hold is active)
+   └────────────┴────────► rejected   (with resolution note)
 ```
 
 - `dueAt = createdAt + DSAR_RESPONSE_DAYS` (default 30).
@@ -131,8 +132,9 @@ pending ──► in_review ──► completed
 - An erasure request that is completed calls `anonymiseUser()`: name replaced, email replaced with
   `erased+<id>@invalid.local`, password randomised, department/designation/code/salary/bank cleared,
   account deactivated, `tokenVersion` bumped, refresh hash cleared.
-- **Legal hold:** erasure is blocked while `retentionUntil > now` (statutory payroll retention).
-  The request stays recorded with `legalHold: true` and a reason; it is not silently dropped.
+- **Legal hold:** erasure is blocked while the employee is active or `retentionUntil > now`
+  (statutory payroll retention). The request is marked `deferred` with a reason; it is not silently
+  dropped, and completing it returns HTTP 409 until the hold ends.
 
 ### 5.3 Why legal hold matters
 
@@ -163,6 +165,17 @@ an export creates a `DATA_EXPORTED` critical audit event, so the export itself i
 disables login and bumps `tokenVersion`; an admin can restore. Destructive deletion only happens
 through the approved erasure workflow after the hold expires.
 
+**Retention enforcement is runnable, not just a date field:**
+
+```powershell
+npm.cmd run retention:run     # dry run: lists eligible records + overdue DSARs
+npm.cmd run retention:apply   # anonymises records whose retention window ended
+```
+
+The sweep is idempotent, skips active employees, skips already-anonymised records, and writes a
+critical `RETENTION_PURGED` audit event for each record. A production deployment should run it on
+a scheduler (cron/worker); that scheduling is the remaining operational step.
+
 ---
 
 ## 7. Security safeguards relevant to DPDP
@@ -172,10 +185,12 @@ The Act requires "reasonable security safeguards". This project interprets that 
 1. **Encryption at rest for high-risk fields** — AES-256-GCM, authenticated (see `SECURITY.md`).
 2. **Least privilege** — RBAC + department scoping + self-only access.
 3. **Time-bound elevation** — HR needs an approved, expiring grant for salary/bank data.
-4. **Accountability** — hash-chained audit; every sensitive read is a critical event.
+4. **Accountability** — hash-chained audit, Merkle-root anchor receipts, and a downloadable
+   compliance evidence pack; every sensitive read is a critical event.
 5. **Confidentiality of credentials** — bcrypt, rotating refresh tokens, in-memory access tokens.
 6. **Resilience** — validation, sanitisation, rate limits, fail-fast configuration.
-7. **Evidence** — tests, smoke checks and a tamper demo, not just assertions.
+7. **Evidence** — 24 unit tests, 23 smoke checks, a tamper demo and an anchor mismatch proof,
+   not just assertions.
 
 ---
 
@@ -206,6 +221,10 @@ that pastes "DPDP compliant" onto a slide.
 5. **Export my data** → open the JSON (profile, consents, leaves, audit events).
 6. Raise an **erasure** request → show the legal-hold explanation and the 30-day due date.
 7. Sign in as admin → **Security Center** → show the DSAR queue, overdue flag and resolution flow.
+8. Click **Download compliance pack** → open the JSON and point at consent coverage, DSAR SLA,
+   chain verification and the known-limitations list.
+9. Click **Download anchor receipt** → explain that publishing this Merkle root outside the
+   database closes the truncation gap.
 
 Then switch to the security story (tamper demo) — together they answer "motive, handling and
 usefulness" in one pass.

@@ -22,11 +22,16 @@ Legend: **Impact** = risk/compliance reduction · **Effort** = engineering days 
 | Time-bound JIT sensitive access (reason, approval, expiry, revoke) | `models/AccessGrant.js`, `controllers/accessController.js` |
 | JWT hardening: in-memory access token, rotating httpOnly refresh, tokenVersion revocation | `services/tokenService.js`, `middleware/authMiddleware.js` |
 | Soft delete + retention date + restore | `models/User.js`, employee controller |
+| Runnable retention sweep with `RETENTION_PURGED` audit events | `services/retentionService.js`, `scripts/retention-run.js`, `tests/retention.test.js` |
+| Merkle-root anchor receipts + verify CLI | `utils/auditChain.js`, `controllers/auditController.js`, `scripts/anchor-chain.js`, `docs/anchors/` |
+| Downloadable compliance evidence pack (counts, chain proof, access matrix) | `GET /api/privacy/compliance-pack`, Security Center UI |
 | Fail-fast secrets, Helmet, CORS allow-list, rate limits, sanitisation, validation | `config/env.js`, `server.js`, middleware |
-| Tests + smoke + tamper demo + docs | 14 unit tests, 20 smoke checks, `docs/` |
+| CI: unit tests, lint/build, smoke against an ephemeral Mongo | `.github/workflows/ci.yml` |
+| Tests + smoke + tamper demo + anchor proof + docs | 24 unit tests, 23 smoke checks, `docs/` |
 
-**Explicitly not claimed in Phase 0:** KMS/HSM, MFA/WebAuthn, multi-tenancy, external anchoring,
-breach-notification automation, cross-border controls, children's data, nomination.
+**Explicitly not claimed in Phase 0:** KMS/HSM, MFA/WebAuthn, multi-tenancy, automated external
+anchoring/publishing, breach-notification automation, cross-border controls, children's data,
+nomination.
 
 ---
 
@@ -34,17 +39,17 @@ breach-notification automation, cross-border controls, children's data, nominati
 
 | # | Item | Why | Impact | Effort | Risk / note |
 |---|---|---|---|---|---|
-| 1 | **External anchor of the audit chain** | Closes the "delete the newest rows" gap; turns tamper-evidence into something a third party can check | High | 3–5 d | Needs an append-only store (S3 Object Lock / RFC 3161 / public transparency log). Publish a daily Merkle root; store the receipt |
+| 1 | **Publish the audit anchor externally** | Receipt generation/verification is done; publishing the Merkle root closes the "delete the newest rows" gap | High | 2–3 d | Commit receipts or push to S3 Object Lock / RFC 3161 / a transparency log. Schedule daily anchoring and alert on failure |
 | 2 | **KMS/HSM envelope encryption** | Removes long-lived data keys from the app host | High | 4–6 d | AWS KMS or Vault; per-tenant data keys; re-wrap without re-encrypting all rows; local dev fallback must stay usable |
 | 3 | **WebAuthn/passkeys for admin + HR** | Credential phishing is the most likely account-takeover path for privileged users | High | 4–6 d | Libraries: SimpleWebAuthn; recovery codes; fallback policy for old devices |
-| 4 | **Automated retention + DSAR reminders** | Retention is a policy today; it should be an enforced job | High | 3–4 d | Nightly job: purge/anonymise after `retentionUntil`, notify owners before DSAR due date, emit audit events; must be idempotent |
-| 5 | **CI: tests + authorisation matrix + dependency audit** | Prevents regressions in the exact area the project claims | Medium | 2–3 d | GitHub Actions: `npm test`, smoke against an ephemeral Mongo, `npm audit`, lint, build; route-by-route 403 tests |
-| 6 | **Regex escaping + CSP tuning + Redis rate-limit store** | Closes three small but real weaknesses called out in `SECURITY.md` | Medium | 1–2 d | Escape search input; define explicit `connect-src`/`script-src`; Redis store for multi-instance |
+| 4 | **Schedule retention + DSAR reminders** | The sweep and overdue list exist; they need a scheduler and notifications | High | 2–3 d | Cron/worker: `retention:apply`, notify owners before DSAR due date, alert on failure; must be idempotent |
+| 5 | **Authorisation-matrix tests** | Prevent regressions in the exact area the project claims | Medium | 2–3 d | Route-by-route 401/403 tests; CI already runs unit, lint/build and smoke |
+| 6 | **CSP tuning + Redis rate-limit store** | Closes two small but real weaknesses called out in `SECURITY.md` | Medium | 1–2 d | Define explicit `connect-src`/`script-src`; Redis store for multi-instance |
 | 7 | **DPO role separation** | The operator should not be the auditor or the rights handler in a real deployment | Medium | 2–3 d | New `dpo` role with audit + DSAR access, no employee edit; organisation policy documented |
-| 8 | **Signed compliance pack export** | Makes the evidence usable in an audit | Medium | 2–3 d | PDF/JSON: control summary, chain verification receipt, consent coverage, DSAR SLA, access matrix; hash + signature |
+| 8 | **Sign the compliance pack** | The pack exists; signing makes it tamper-evident in an audit | Medium | 1–2 d | Hash + sign the JSON/PDF; publish the verification key |
 
 **Recommended order:** 1 → 2 → 5 → 4 → 3 → 8 → 6 → 7.
-(Anchor and KMS first because they close the two biggest "yes, but…" questions.)
+(External anchor and KMS first because they close the two biggest "yes, but…" questions.)
 
 ---
 
