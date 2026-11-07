@@ -18,11 +18,6 @@ const actionBadge = {
   LEAVE_APPROVED: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   LEAVE_REJECTED: 'bg-rose-50 text-rose-700 border-rose-200',
   LEAVE_CANCELLED: 'bg-slate-100 text-slate-700 border-slate-200',
-  CONSENT_GRANTED: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  CONSENT_WITHDRAWN: 'bg-amber-50 text-amber-700 border-amber-200',
-  DATA_EXPORTED: 'bg-purple-50 text-purple-700 border-purple-200',
-  ERASURE_REQUESTED: 'bg-red-50 text-red-700 border-red-200',
-  DATA_ERASED: 'bg-red-50 text-red-700 border-red-200',
   JIT_ACCESS_REQUESTED: 'bg-blue-50 text-blue-700 border-blue-200',
   JIT_ACCESS_APPROVED: 'bg-amber-50 text-amber-700 border-amber-200',
   JIT_ACCESS_DENIED: 'bg-slate-100 text-slate-700 border-slate-200',
@@ -37,7 +32,7 @@ const severityStyle = {
   critical: 'bg-red-50 text-red-700 border-red-200',
 };
 
-const categories = ['ALL', 'AUTH', 'EMPLOYEE', 'LEAVE', 'PRIVACY', 'ACCESS', 'SYSTEM'];
+const categories = ['ALL', 'AUTH', 'EMPLOYEE', 'LEAVE', 'ACCESS', 'SYSTEM'];
 const severities = ['ALL', 'info', 'warning', 'critical'];
 
 const AuditLogs = () => {
@@ -52,6 +47,9 @@ const AuditLogs = () => {
   const [verifying, setVerifying] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [pendingGrants, setPendingGrants] = useState([]);
+  const [reviewingId, setReviewingId] = useState(null);
 
   const loadLogs = useCallback(async () => {
     setLoading(true);
@@ -73,7 +71,40 @@ const AuditLogs = () => {
     }
   }, [category, severity, search, page]);
 
-  useEffect(() => { loadLogs(); }, [loadLogs]);
+  const loadPendingGrants = useCallback(async () => {
+    try {
+      const res = await api.get('/access/requests');
+      const pending = (res.data || []).filter((g) => g.status === 'pending');
+      setPendingGrants(pending);
+    } catch {
+      setPendingGrants([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLogs();
+    loadPendingGrants();
+  }, [loadLogs, loadPendingGrants]);
+
+  const handleReviewGrant = async (id, status) => {
+    setReviewingId(id);
+    setError('');
+    setSuccess('');
+    try {
+      await api.put(`/access/requests/${id}/review`, {
+        status,
+        durationMinutes: 30, // 30 minutes temporary access
+        reviewNote: status === 'approved' ? 'Approved for 30 mins' : 'Rejected',
+      });
+      setSuccess(`Access request ${status} successfully.`);
+      await loadPendingGrants();
+      await loadLogs();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to review access request');
+    } finally {
+      setReviewingId(null);
+    }
+  };
 
   const verifyChain = async () => {
     setVerifying(true);
@@ -95,17 +126,16 @@ const AuditLogs = () => {
 
   return (
     <div className="mx-auto max-w-6xl p-6">
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Security Audit Trail</h1>
           <p className="mt-0.5 max-w-2xl text-xs text-slate-500">
-            Append-only, hash-chained record of authentication, employee, leave, privacy and
-            access events. Each record commits to the one before it, so silent edits are detectable.
+            Append-only, hash-chained record of all authentication, employee, leave, and access operations.
           </p>
         </div>
         <div className="flex gap-2">
           <button
-            onClick={loadLogs}
+            onClick={() => { loadLogs(); loadPendingGrants(); }}
             className="rounded-lg border border-slate-300 bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-200"
           >
             &#x21bb; Refresh
@@ -115,7 +145,7 @@ const AuditLogs = () => {
             disabled={verifying}
             className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
           >
-            {verifying ? 'Verifying…' : 'Verify integrity'}
+            {verifying ? 'Verifying…' : 'Verify Integrity'}
           </button>
         </div>
       </div>
@@ -123,6 +153,45 @@ const AuditLogs = () => {
       {error && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-600">
           {error}
+        </div>
+      )}
+      {success && (
+        <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-700">
+          {success}
+        </div>
+      )}
+
+      {/* Pending Temporary Access Requests for Admin */}
+      {pendingGrants.length > 0 && (
+        <div className="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <h2 className="text-sm font-bold text-amber-900">Pending Temporary Salary Access Requests (JIT)</h2>
+          <p className="text-xs text-amber-700 mb-3">HR Managers requesting temporary access to view masked fields.</p>
+          <div className="space-y-2">
+            {pendingGrants.map((grant) => (
+              <div key={grant._id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-lg border border-amber-200">
+                <div className="text-xs">
+                  <span className="font-semibold text-slate-800">{grant.grantee?.name} ({grant.grantee?.email})</span>
+                  <span className="text-slate-500 ml-2">&bull; Reason: &ldquo;{grant.reason}&rdquo;</span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    disabled={reviewingId === grant._id}
+                    onClick={() => handleReviewGrant(grant._id, 'approved')}
+                    className="rounded bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    Approve (30 Mins)
+                  </button>
+                  <button
+                    disabled={reviewingId === grant._id}
+                    onClick={() => handleReviewGrant(grant._id, 'denied')}
+                    className="rounded bg-rose-600 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -150,9 +219,9 @@ const AuditLogs = () => {
             <p className="mt-0.5 text-xs text-slate-500">
               {verification
                 ? verification.valid
-                  ? `${verification.total} record(s) recomputed. ${verification.coversLatest ? 'Covers the current chain head.' : 'Partial window verified.'}`
+                  ? `${verification.total} record(s) recomputed. Covers the current chain head.`
                   : verification.reason
-                : 'Click "Verify integrity" to recompute every hash and compare it with the stored value.'}
+                : 'Click "Verify Integrity" to recompute SHA-256 hashes and verify data immutability.'}
             </p>
           </div>
           {chain && (
@@ -297,12 +366,6 @@ const AuditLogs = () => {
           </div>
         </div>
       </div>
-
-      <p className="mt-4 text-[11px] leading-relaxed text-slate-400">
-        Note: the application blocks updates and deletes on this collection. The hash chain exists to
-        detect changes made directly in the database by an operator or attacker — run “Verify integrity”
-        after any suspected incident.
-      </p>
     </div>
   );
 };

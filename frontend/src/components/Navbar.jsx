@@ -27,17 +27,15 @@ const Navbar = () => {
           <Link to="/dashboard" className="flex items-center gap-2">
             <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 font-bold text-sm">SV</span>
             <span className="font-bold text-base tracking-tight">SecureVault HR</span>
-            <span className="hidden sm:inline-block rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
-              DPDP-ready
+            <span className="hidden sm:inline-block rounded-full border border-blue-400/40 bg-blue-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
+              RBAC & Audit
             </span>
           </Link>
 
           <Link to="/dashboard" className={linkClass}>Dashboard</Link>
           {isReviewer && <Link to="/employees" className={linkClass}>Employees</Link>}
           <Link to="/leaves" className={linkClass}>Leaves</Link>
-          <Link to="/privacy" className={linkClass}>My Data</Link>
-          {isAdmin && <Link to="/security" className={linkClass}>Security Center</Link>}
-          {isAdmin && <Link to="/audit-logs" className={linkClass}>Audit Log</Link>}
+          {isAdmin && <Link to="/audit-logs" className={linkClass}>Audit Logs</Link>}
           <Link to="/profile" className={linkClass}>Profile</Link>
         </div>
 

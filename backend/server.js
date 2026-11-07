@@ -25,7 +25,6 @@ const employeeRoutes = require('./routes/employeeRoutes');
 const leaveRoutes = require('./routes/leaveRoutes');
 const auditRoutes = require('./routes/auditRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
-const privacyRoutes = require('./routes/privacyRoutes');
 const accessRoutes = require('./routes/accessRoutes');
 
 const app = express();
@@ -88,7 +87,6 @@ app.use('/api/employees', employeeRoutes);
 app.use('/api/leaves', leaveRoutes);
 app.use('/api/audit-logs', auditRoutes);
 app.use('/api/analytics', analyticsRoutes);
-app.use('/api/privacy', privacyRoutes);
 app.use('/api/access', accessRoutes);
 
 app.use(notFound);

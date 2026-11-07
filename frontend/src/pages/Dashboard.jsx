@@ -47,9 +47,7 @@ const Dashboard = () => {
   const [stats, setStats] = useState({});
   const [summary, setSummary] = useState(null);
   const [myLeavesList, setMyLeavesList] = useState([]);
-  const [posture, setPosture] = useState(null);
-  const [privacy, setPrivacy] = useState(null);
-  const [activeGrant, setActiveGrant] = useState(null);
+  const [auditStats, setAuditStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -64,13 +62,14 @@ const Dashboard = () => {
           ];
           if (isAdmin) {
             requests.push(api.get('/audit-logs/stats'));
-            requests.push(api.get('/privacy/stats'));
-          } else {
-            requests.push(api.get('/access/active'));
           }
 
-          const [empRes, leaveRes, summaryRes, extra] = await Promise.all(requests);
+          const results = await Promise.all(requests);
+          const empRes = results[0];
+          const leaveRes = results[1];
+          const summaryRes = results[2];
           const leaves = leaveRes.data || [];
+
           setStats({
             employees: empRes.data.pagination?.total ?? empRes.data.data?.length ?? 0,
             pendingLeaves: leaves.filter((l) => l.status === 'pending').length,
@@ -78,18 +77,11 @@ const Dashboard = () => {
           });
           setSummary(summaryRes.data);
 
-          if (isAdmin) {
-            setPosture(extra.data);
-            const privacyRes = await requests[4];
-            setPrivacy(privacyRes.data);
-          } else {
-            setActiveGrant(extra.data?.grant || null);
+          if (isAdmin && results[3]) {
+            setAuditStats(results[3].data);
           }
         } else {
-          const [leaveRes, privacyRes] = await Promise.all([
-            api.get('/leaves/me'),
-            api.get('/privacy/me').catch(() => null),
-          ]);
+          const leaveRes = await api.get('/leaves/me');
           const leaves = leaveRes.data || [];
           setMyLeavesList(leaves);
           setStats({
@@ -98,7 +90,6 @@ const Dashboard = () => {
             approvedLeaves: leaves.filter((l) => l.status === 'approved').length,
             rejectedLeaves: leaves.filter((l) => l.status === 'rejected').length,
           });
-          if (privacyRes) setPrivacy(privacyRes.data);
         }
       } catch (err) {
         console.error('Failed to load dashboard data:', err);
@@ -134,41 +125,34 @@ const Dashboard = () => {
     }],
   };
 
-  const chain = posture?.chain;
-
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
       {/* Header */}
       <div className="flex flex-col gap-4 rounded-2xl bg-gradient-to-r from-slate-900 to-blue-900 p-6 text-white shadow-md sm:flex-row sm:items-center sm:justify-between">
         <div>
           <span className="mb-2 inline-block rounded-full bg-blue-500/30 px-2.5 py-0.5 text-xs font-medium tracking-wide text-blue-200">
-            {isAdmin ? 'SYSTEM ADMINISTRATOR' : user.role === 'hr_manager' ? 'HR MANAGEMENT' : 'EMPLOYEE PORTAL'}
+            {isAdmin ? 'ADMINISTRATOR' : user.role === 'hr_manager' ? 'HR MANAGER' : 'EMPLOYEE'}
           </span>
           <h1 className="text-2xl font-bold sm:text-3xl">Welcome, {user.name}</h1>
           <p className="mt-1 text-sm text-slate-300">
-            SecureVault HR &bull; DPDP-ready employee data trust layer
+            SecureVault HR &bull; Role-Based Access Control & Audit Security
             {user.department && <> &bull; {user.department}</>}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           {user.role === 'employee' && (
-            <>
-              <Link to="/leaves" className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-blue-700">
-                + Apply for Leave
-              </Link>
-              <Link to="/privacy" className="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20">
-                My Data
-              </Link>
-            </>
+            <Link to="/leaves" className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-blue-700">
+              + Apply for Leave
+            </Link>
           )}
           {isReviewer && (
             <Link to="/employees" className="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20">
-              View Employees
+              Manage Employees
             </Link>
           )}
           {isAdmin && (
-            <Link to="/security" className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-emerald-600">
-              Security Center
+            <Link to="/audit-logs" className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-blue-700">
+              View Audit Logs
             </Link>
           )}
         </div>
@@ -177,107 +161,62 @@ const Dashboard = () => {
       {/* Metrics */}
       {isReviewer ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard label="Employees in scope" value={loading ? '—' : stats.employees} hint={isAdmin ? 'Whole organisation' : `${summary?.scope || user.department} only`} tone="blue" />
-          <MetricCard label="Pending leaves" value={stats.pendingLeaves ?? '—'} hint="Awaiting your review" tone="orange" />
-          <MetricCard label="Approved leaves" value={stats.approvedLeaves ?? '—'} hint="Current records" tone="green" />
-          {isAdmin ? (
-            <MetricCard
-              label="Sensitive reads (24h)"
-              value={posture?.sensitiveAccessLast24h ?? 0}
-              hint="Salary/bank decryptions, all logged"
-              tone={(posture?.sensitiveAccessLast24h ?? 0) > 0 ? 'red' : 'green'}
-            />
-          ) : (
-            <MetricCard
-              label="Sensitive access"
-              value={activeGrant ? 'Granted' : 'Masked'}
-              hint={activeGrant ? `Expires ${new Date(activeGrant.expiresAt).toLocaleTimeString()}` : 'Request a time-bound grant'}
-              tone={activeGrant ? 'orange' : 'slate'}
-            />
-          )}
+          <MetricCard label="Employees" value={loading ? '—' : stats.employees} hint={isAdmin ? 'All records' : `${user.department || 'Department'} only`} tone="blue" />
+          <MetricCard label="Pending Leaves" value={stats.pendingLeaves ?? '—'} hint="Requires review" tone="orange" />
+          <MetricCard label="Approved Leaves" value={stats.approvedLeaves ?? '—'} hint="Active leaves" tone="green" />
+          <MetricCard
+            label="Field Encryption"
+            value="AES-256"
+            hint="Salary & Bank data encrypted"
+            tone="purple"
+          />
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <MetricCard label="My leave requests" value={stats.totalLeaves ?? '—'} tone="blue" />
+          <MetricCard label="My Leave Requests" value={stats.totalLeaves ?? '—'} tone="blue" />
           <MetricCard label="Pending" value={stats.pendingLeaves ?? 0} tone="orange" />
           <MetricCard label="Approved" value={stats.approvedLeaves ?? 0} tone="green" />
           <MetricCard label="Rejected" value={stats.rejectedLeaves ?? 0} tone="red" />
         </div>
       )}
 
-      {/* Trust posture (admin) */}
-      {isAdmin && posture && (
-        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-            <div>
-              <h2 className="text-sm font-bold text-slate-800">Trust posture</h2>
-              <p className="mt-0.5 text-xs text-slate-500">Live evidence from the encryption, audit and privacy layers.</p>
-            </div>
-            <Link to="/security" className="text-xs font-semibold text-blue-600 hover:underline">
-              Open Security Center &rarr;
-            </Link>
-          </div>
-          <div className="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 p-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">Encryption</p>
-              <p className="mt-1 text-sm font-bold text-slate-800">AES-256-GCM</p>
-              <p className="mt-0.5 text-[11px] text-slate-500">Authenticated, per-record IV</p>
-            </div>
-            <div className="rounded-lg border border-slate-100 bg-slate-50/60 p-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">Audit chain</p>
-              <p className="mt-1 text-sm font-bold text-slate-800">{chain?.totalRecords ?? 0} records</p>
-              <p className="mt-0.5 break-all font-mono text-[10px] text-slate-500">head {chain?.lastHash?.slice(0, 16)}…</p>
-            </div>
-            <div className={`rounded-lg border p-3 ${(posture.failedLoginsLast24h ?? 0) > 0 ? 'border-red-100 bg-red-50/60' : 'border-slate-100 bg-slate-50/60'}`}>
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">Failed logins (24h)</p>
-              <p className="mt-1 text-sm font-bold text-slate-800">{posture.failedLoginsLast24h ?? 0}</p>
-              <p className="mt-0.5 text-[11px] text-slate-500">{posture.total ?? 0} total events</p>
-            </div>
-            <div className={`rounded-lg border p-3 ${(privacy?.overdueRequests ?? 0) > 0 ? 'border-red-100 bg-red-50/60' : 'border-slate-100 bg-slate-50/60'}`}>
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">Open DSARs</p>
-              <p className="mt-1 text-sm font-bold text-slate-800">{privacy?.pendingRequests ?? 0}</p>
-              <p className="mt-0.5 text-[11px] text-slate-500">{privacy?.overdueRequests ?? 0} overdue · {privacy?.consentCoveragePercent ?? 0}% consent coverage</p>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* Employee privacy summary */}
-      {!isReviewer && privacy && (
+      {/* Audit Stats for Admin */}
+      {isAdmin && auditStats && (
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div>
-              <h2 className="text-sm font-bold text-slate-800">Your data rights at a glance</h2>
-              <p className="mt-0.5 text-xs text-slate-500">What is stored, who accessed it, and how to exercise your rights.</p>
+              <h2 className="text-sm font-bold text-slate-800">Security & Audit Overview</h2>
+              <p className="text-xs text-slate-500">Live system activity and audit trail status.</p>
             </div>
-            <Link to="/privacy" className="text-xs font-semibold text-blue-600 hover:underline">
-              Open My Data &rarr;
+            <Link to="/audit-logs" className="text-xs font-semibold text-blue-600 hover:underline">
+              View Full Logs &rarr;
             </Link>
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <div className="rounded-lg bg-slate-50 p-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Encryption</p>
-              <p className="mt-1 text-sm font-bold text-slate-800">{privacy.encryption?.algorithm || 'AES-256-GCM'}</p>
+              <p className="text-[11px] font-semibold uppercase text-slate-500">Total Audit Logs</p>
+              <p className="mt-1 text-xl font-bold text-slate-800">{auditStats.total ?? 0}</p>
+              <p className="text-[11px] text-slate-400">All actions logged</p>
             </div>
             <div className="rounded-lg bg-slate-50 p-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Audit events about you</p>
-              <p className="mt-1 text-sm font-bold text-slate-800">{privacy.audit?.totalEventsAboutMe ?? 0}</p>
+              <p className="text-[11px] font-semibold uppercase text-slate-500">Actions (Last 24h)</p>
+              <p className="mt-1 text-xl font-bold text-blue-600">{auditStats.last24h ?? 0}</p>
+              <p className="text-[11px] text-slate-400">Recent operations</p>
             </div>
             <div className="rounded-lg bg-slate-50 p-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Active consents</p>
-              <p className="mt-1 text-sm font-bold text-slate-800">
-                {privacy.consents?.filter((c) => c.granted).length ?? 0} / {privacy.consents?.length ?? 0}
-              </p>
+              <p className="text-[11px] font-semibold uppercase text-slate-500">Failed Logins</p>
+              <p className="mt-1 text-xl font-bold text-slate-800">{auditStats.failedLoginsLast24h ?? 0}</p>
+              <p className="text-[11px] text-slate-400">Brute-force protection active</p>
             </div>
           </div>
         </section>
       )}
 
-      {/* Charts */}
+      {/* Analytics Charts (SOP Module: Analytics Dashboard) */}
       {isReviewer && summary && (summary.departmentCounts?.length > 0 || summary.leaveStatusCounts?.length > 0) && (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="mb-3 text-sm font-bold text-slate-800">Department distribution</h3>
+            <h3 className="mb-3 text-sm font-bold text-slate-800">Department Distribution</h3>
             {deptData.labels.length > 0 ? (
               <div className="flex h-64 items-center justify-center">
                 <Bar data={deptData} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }} />
@@ -288,7 +227,7 @@ const Dashboard = () => {
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="mb-3 text-sm font-bold text-slate-800">Leave requests by status</h3>
+            <h3 className="mb-3 text-sm font-bold text-slate-800">Leave Requests by Status</h3>
             {leaveData.labels.length > 0 ? (
               <div className="flex h-64 items-center justify-center">
                 <Doughnut data={leaveData} options={{ responsive: true, maintainAspectRatio: false }} />
@@ -299,7 +238,7 @@ const Dashboard = () => {
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="mb-3 text-sm font-bold text-slate-800">Role breakdown</h3>
+            <h3 className="mb-3 text-sm font-bold text-slate-800">Role Breakdown</h3>
             {roleData.labels.length > 0 ? (
               <div className="flex h-64 items-center justify-center">
                 <Pie data={roleData} options={{ responsive: true, maintainAspectRatio: false }} />
@@ -311,11 +250,11 @@ const Dashboard = () => {
         </div>
       )}
 
-      {/* Employee recent leaves */}
+      {/* Employee Recent Leaves */}
       {!isReviewer && (
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-bold text-slate-800">My recent leave requests</h2>
+            <h2 className="text-lg font-bold text-slate-800">My Recent Leave Requests</h2>
             <Link to="/leaves" className="text-sm text-blue-600 hover:underline">
               View all &rarr;
             </Link>
