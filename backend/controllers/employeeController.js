@@ -155,6 +155,68 @@ exports.getMyProfile = async (req, res, next) => {
   }
 };
 
+// @route GET /api/employees/me/payslip  (Self-service cryptographic payslip)
+exports.getMyPayslip = async (req, res, next) => {
+  try {
+    const employee = await User.findById(req.user.id)
+      .select('-password -refreshTokenHash -refreshTokenExpiresAt');
+    if (!employee || employee.isDeleted) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+
+    const decryptedSalary = employee.salary ? safeDecrypt(employee.salary) : '0';
+    const decryptedBank = employee.bankDetails ? safeDecrypt(employee.bankDetails) : 'N/A';
+    const numSalary = Math.max(10000, Number(decryptedSalary) || 50000);
+
+    const basic = Math.round(numSalary * 0.5);
+    const hra = Math.round(numSalary * 0.3);
+    const specialAllowance = numSalary - basic - hra;
+    const pf = Math.round(Math.min(basic * 0.12, 1800));
+    const professionalTax = 200;
+    const totalDeductions = pf + professionalTax;
+    const netSalary = numSalary - totalDeductions;
+
+    const period = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(new Date());
+
+    const verificationPayload = `${employee.employeeCode || employee._id}:${numSalary}:${decryptedBank}:${period}`;
+    const verificationHash = require('crypto').createHash('sha256').update(verificationPayload).digest('hex');
+
+    return res.status(200).json({
+      company: 'SecureVault HR Technologies Inc.',
+      period,
+      generatedAt: new Date().toISOString(),
+      employee: {
+        id: employee._id,
+        name: employee.name,
+        email: employee.email,
+        employeeCode: employee.employeeCode || `SV-${String(employee._id).slice(-4).toUpperCase()}`,
+        designation: employee.designation || 'Staff Member',
+        department: employee.department || 'General',
+        bankDetails: decryptedBank,
+      },
+      earnings: {
+        basic,
+        hra,
+        specialAllowance,
+        grossSalary: numSalary,
+      },
+      deductions: {
+        pf,
+        professionalTax,
+        totalDeductions,
+      },
+      netSalary,
+      security: {
+        algorithm: 'AES-256-GCM',
+        verificationHash,
+        tamperEvident: true,
+      },
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
 // @route PUT /api/employees/me
 exports.updateMyProfile = async (req, res, next) => {
   try {

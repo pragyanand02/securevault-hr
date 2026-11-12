@@ -148,16 +148,16 @@ const Employees = () => {
 
   const handleSoftDelete = async (employee) => {
     const confirmed = window.confirm(
-      `Deactivate "${employee.name}"?\n\nThis is a soft delete: the account is disabled and the record is kept under statutory retention, not erased.`
+      `Offboard "${employee.name}"?\n\nSecurity enforcement actions:\n1. Account is immediately disabled\n2. All active JWT sessions are revoked (tokenVersion++)\n3. Record archived under statutory retention.`
     );
     if (!confirmed) return;
     setError('');
     try {
       const res = await api.delete(`/employees/${employee.id}`);
-      flash(res.data.message || 'Employee deactivated.');
+      flash(res.data.message || 'Employee offboarded and sessions revoked.');
       loadEmployees();
     } catch (err) {
-      setError(err.response?.data?.message || 'Delete failed');
+      setError(err.response?.data?.message || 'Offboarding failed');
     }
   };
 
@@ -542,7 +542,7 @@ const Employees = () => {
                         onClick={() => handleSoftDelete(employee)}
                         className="rounded border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
                       >
-                        Deactivate
+                        Offboard
                       </button>
                     )}
                     {isAdmin && employee.isDeleted && (

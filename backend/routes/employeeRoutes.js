@@ -4,6 +4,7 @@ const {
   getEmployees,
   getEmployeeById,
   getMyProfile,
+  getMyPayslip,
   updateMyProfile,
   createEmployee,
   updateEmployee,
@@ -22,6 +23,7 @@ const {
 router.use(protect);
 
 router.get('/me', getMyProfile);
+router.get('/me/payslip', getMyPayslip);
 router.put('/me', profileUpdateRules, handleValidation, updateMyProfile);
 
 router.get('/', authorize('admin', 'hr_manager'), getEmployees);

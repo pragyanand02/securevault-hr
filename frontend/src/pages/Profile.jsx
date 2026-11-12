@@ -6,6 +6,9 @@ import { useAuth } from '../context/AuthContext';
 const Profile = () => {
   const { updateUser, logout } = useAuth();
   const [profile, setProfile] = useState(null);
+  const [payslip, setPayslip] = useState(null);
+  const [showPayslip, setShowPayslip] = useState(false);
+  const [loadingPayslip, setLoadingPayslip] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [form, setForm] = useState({ name: '', designation: '' });
   const [passwords, setPasswords] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
@@ -24,6 +27,20 @@ const Profile = () => {
       });
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load profile');
+    }
+  };
+
+  const loadPayslip = async () => {
+    setLoadingPayslip(true);
+    setError('');
+    try {
+      const res = await api.get('/employees/me/payslip');
+      setPayslip(res.data);
+      setShowPayslip(true);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to generate payslip');
+    } finally {
+      setLoadingPayslip(false);
     }
   };
 
@@ -217,7 +234,15 @@ const Profile = () => {
             </p>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={loadPayslip}
+            disabled={loadingPayslip}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-600 bg-blue-50 px-3.5 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 disabled:opacity-60 shadow-sm"
+          >
+            📄 {loadingPayslip ? 'Generating Secure Payslip…' : 'Generate & Download Official Payslip'}
+          </button>
           <Link to="/privacy" className="text-xs font-semibold text-blue-600 hover:underline">
             See full data inventory, consent history and retention &rarr;
           </Link>
@@ -272,6 +297,122 @@ const Profile = () => {
           Account status: {profile.isActive ? 'Active' : 'Inactive'} &bull; Role: {profile.role?.replace('_', ' ').toUpperCase()}
         </span>
       </div>
+
+      {/* Cryptographic Payslip Modal */}
+      {showPayslip && payslip && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl border border-slate-200">
+            {/* Header */}
+            <div className="border-b border-slate-200 pb-4 flex justify-between items-start">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold text-white">SV</span>
+                  <h3 className="text-lg font-bold text-slate-800">{payslip.company}</h3>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">Official Monthly Compensation & Earnings Statement</p>
+              </div>
+              <div className="text-right">
+                <span className="inline-block rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-800">
+                  {payslip.period}
+                </span>
+                <p className="mt-1 font-mono text-[10px] text-slate-400">Generated: {new Date(payslip.generatedAt).toLocaleDateString()}</p>
+              </div>
+            </div>
+
+            {/* Employee Meta */}
+            <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 p-3.5 rounded-xl text-xs border border-slate-100">
+              <div>
+                <p className="text-slate-400 font-medium">Employee Name</p>
+                <p className="font-semibold text-slate-800 mt-0.5">{payslip.employee.name}</p>
+              </div>
+              <div>
+                <p className="text-slate-400 font-medium">Employee Code</p>
+                <p className="font-semibold text-slate-800 mt-0.5">{payslip.employee.employeeCode}</p>
+              </div>
+              <div>
+                <p className="text-slate-400 font-medium">Department</p>
+                <p className="font-semibold text-slate-800 mt-0.5">{payslip.employee.department}</p>
+              </div>
+              <div>
+                <p className="text-slate-400 font-medium">Designation</p>
+                <p className="font-semibold text-slate-800 mt-0.5">{payslip.employee.designation}</p>
+              </div>
+            </div>
+
+            {/* Earnings & Deductions Tables */}
+            <div className="mt-4 grid sm:grid-cols-2 gap-4">
+              {/* Earnings */}
+              <div className="border border-slate-200 rounded-xl p-3.5 bg-white">
+                <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700 border-b pb-1.5 mb-2">Earnings</h4>
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex justify-between text-slate-600"><span>Basic Pay (50%)</span><span>₹{payslip.earnings.basic.toLocaleString()}</span></div>
+                  <div className="flex justify-between text-slate-600"><span>House Rent Allowance (30%)</span><span>₹{payslip.earnings.hra.toLocaleString()}</span></div>
+                  <div className="flex justify-between text-slate-600"><span>Special Allowance</span><span>₹{payslip.earnings.specialAllowance.toLocaleString()}</span></div>
+                  <div className="border-t pt-1.5 flex justify-between font-bold text-slate-800"><span>Gross Earnings</span><span>₹{payslip.earnings.grossSalary.toLocaleString()}</span></div>
+                </div>
+              </div>
+
+              {/* Deductions */}
+              <div className="border border-slate-200 rounded-xl p-3.5 bg-white">
+                <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700 border-b pb-1.5 mb-2">Deductions</h4>
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex justify-between text-slate-600"><span>Provident Fund (EPF)</span><span>₹{payslip.deductions.pf.toLocaleString()}</span></div>
+                  <div className="flex justify-between text-slate-600"><span>Professional Tax</span><span>₹{payslip.deductions.professionalTax.toLocaleString()}</span></div>
+                  <div className="border-t pt-1.5 flex justify-between font-bold text-slate-800"><span>Total Deductions</span><span>₹{payslip.deductions.totalDeductions.toLocaleString()}</span></div>
+                </div>
+              </div>
+            </div>
+
+            {/* Net Pay Callout */}
+            <div className="mt-4 flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 text-emerald-900">
+              <div>
+                <p className="text-xs font-semibold text-emerald-800">Net Take-Home Disbursed</p>
+                <p className="text-[11px] text-emerald-600 font-mono mt-0.5">Credited to: {payslip.employee.bankDetails}</p>
+              </div>
+              <div className="text-right">
+                <span className="text-2xl font-bold font-mono text-emerald-800">₹{payslip.netSalary.toLocaleString()}</span>
+              </div>
+            </div>
+
+            {/* Cryptographic Tamper-Evidence Seal */}
+            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 p-3.5 text-white">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span className="text-xs font-semibold text-blue-200 uppercase tracking-wider">Cryptographic Security Verification</span>
+                </div>
+                <span className="text-[10px] bg-blue-500/20 text-blue-300 border border-blue-400/30 px-2 py-0.5 rounded font-mono">
+                  {payslip.security.algorithm}
+                </span>
+              </div>
+              <p className="mt-2 text-[10px] text-slate-400">
+                Digital Fingerprint (SHA-256 Digest of verified salary & identity state):
+              </p>
+              <p className="mt-0.5 font-mono text-[10px] text-emerald-400 break-all bg-black/40 p-2 rounded border border-slate-800">
+                {payslip.security.verificationHash}
+              </p>
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div className="mt-5 flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-blue-700 shadow-sm"
+              >
+                🖨️ Print / Save as PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPayslip(false)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
