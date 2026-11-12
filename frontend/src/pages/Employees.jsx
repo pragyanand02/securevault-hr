@@ -63,17 +63,29 @@ const Employees = () => {
   }, [page, debouncedSearch]);
 
   const loadActiveGrant = useCallback(async () => {
-    if (user.role !== 'hr_manager') return;
     try {
       const res = await api.get('/access/active');
       setGrant(res.data.grant || null);
     } catch {
       setGrant(null);
     }
-  }, [user.role]);
+  }, []);
 
   useEffect(() => { loadEmployees(); }, [loadEmployees]);
   useEffect(() => { loadActiveGrant(); }, [loadActiveGrant]);
+
+  // Auto-expire session when grant expiresAt is reached
+  useEffect(() => {
+    if (!grant?.expiresAt) return;
+    const interval = setInterval(() => {
+      if (new Date(grant.expiresAt) <= new Date()) {
+        flash('Decryption session expired. Data automatically re-masked.');
+        setGrant(null);
+        loadEmployees();
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [grant, loadEmployees]);
 
   const flash = (message) => {
     setSuccess(message);
@@ -184,6 +196,46 @@ const Employees = () => {
     }
   };
 
+  const startAdminDecryptionSession = async () => {
+    const reason = window.prompt(
+      'Enter business justification for unmasking sensitive data (5-minute session):',
+      'Compensation & Payroll Verification'
+    );
+    if (reason === null) return;
+    if (!reason.trim()) {
+      setError('A valid business justification is required to unmask sensitive fields.');
+      return;
+    }
+    setRequestingAccess(true);
+    setError('');
+    try {
+      await api.post('/access/admin-session', {
+        reason: reason.trim(),
+        durationMinutes: 5,
+      });
+      flash('5-minute decryption session activated. Audit block chained.');
+      await loadActiveGrant();
+      await loadEmployees();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to start decryption session');
+    } finally {
+      setRequestingAccess(false);
+    }
+  };
+
+  const endAdminDecryptionSession = async () => {
+    if (!window.confirm('Lock and re-mask all sensitive data immediately?')) return;
+    setError('');
+    try {
+      await api.post('/access/admin-session/end');
+      flash('Decryption session ended. Data re-masked and duration logged.');
+      setGrant(null);
+      await loadEmployees();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to end decryption session');
+    }
+  };
+
   const totalPages = pagination.pages || 1;
 
   return (
@@ -193,11 +245,11 @@ const Employees = () => {
           <h1 className="text-2xl font-bold text-slate-800">Employee Directory</h1>
           <p className="mt-0.5 max-w-2xl text-xs text-slate-500">
             {isAdmin
-              ? 'Full scope. Sensitive salary/bank decryptions create a critical audit event.'
+              ? 'Zero-Trust architecture. Sensitive financial fields stay masked until an explicit, audit-logged decryption session is started.'
               : 'Attribute-based scope: you only see employees in your own department. Financial fields stay masked unless an admin grants time-bound access.'}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {user.role === 'hr_manager' && !grant && (
             <button
               onClick={requestSensitiveAccess}
@@ -205,6 +257,23 @@ const Employees = () => {
               className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 transition hover:bg-amber-100 disabled:opacity-60"
             >
               {requestingAccess ? 'Submitting…' : 'Request sensitive access'}
+            </button>
+          )}
+          {isAdmin && !grant && (
+            <button
+              onClick={startAdminDecryptionSession}
+              disabled={requestingAccess}
+              className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-100 flex items-center gap-1.5 shadow-sm"
+            >
+              🔓 Unlock Sensitive Data (5m)
+            </button>
+          )}
+          {isAdmin && grant && (
+            <button
+              onClick={endAdminDecryptionSession}
+              className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-800 transition hover:bg-rose-100 flex items-center gap-1.5 shadow-sm"
+            >
+              🔒 Lock & End Session
             </button>
           )}
           {isAdmin && (
@@ -221,27 +290,25 @@ const Employees = () => {
       {/* Access posture banner */}
       {access && (
         <div className={`mb-5 flex flex-col gap-2 rounded-xl border px-4 py-3 text-xs sm:flex-row sm:items-center sm:justify-between ${
-          access.viaGrant
-            ? 'border-amber-200 bg-amber-50 text-amber-800'
-            : access.sensitiveMasked
-              ? 'border-slate-200 bg-slate-50 text-slate-600'
-              : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+          grant
+            ? 'border-amber-300 bg-amber-50 text-amber-900 shadow-sm'
+            : 'border-slate-200 bg-slate-50 text-slate-700'
         }`}>
           <div>
-            <p className="font-semibold">
-              {access.viaGrant
-                ? `Sensitive fields visible through an approved time-bound grant${grant?.expiresAt ? ` (expires ${new Date(grant.expiresAt).toLocaleTimeString()})` : ''}`
-                : access.sensitiveMasked
-                  ? 'Salary and bank details are masked for your role'
-                  : 'Sensitive fields are decrypted for your admin role — every read is logged'}
+            <p className="font-semibold text-sm">
+              {grant
+                ? `🔓 Active Decryption Session (Expires ${new Date(grant.expiresAt).toLocaleTimeString()}) — Reason: "${grant?.reason || 'Verified'}"`
+                : '🔒 Zero-Trust Enforced: Sensitive financial fields (Salary, Bank details) are masked by default'}
             </p>
-            <p className="mt-0.5">
-              Scope: <span className="font-medium">{access.scope === 'all' ? 'whole organisation' : `${access.scope} department only`}</span>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {grant
+                ? 'Session lifecycle active: start/end timestamps are cryptographically chained into the audit trail.'
+                : 'Click "Unlock Sensitive Data" to initiate a time-bound, audit-logged decryption session.'}
             </p>
           </div>
-          {access.viaGrant && (
-            <span className="rounded-full border border-amber-300 bg-white/60 px-2.5 py-1 font-semibold">
-              JIT grant active
+          {grant && (
+            <span className="rounded-full border border-amber-400 bg-amber-100 px-3 py-1 font-bold text-amber-900 text-xs">
+              ⏱️ JIT Active
             </span>
           )}
         </div>

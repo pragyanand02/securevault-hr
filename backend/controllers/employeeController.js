@@ -86,45 +86,13 @@ exports.getEmployees = async (req, res, next) => {
         .limit(limit),
     ]);
 
-    const grant = req.user.role === 'hr_manager'
-      ? await activeGrant(req.user.id, 'sensitive_fields')
-      : null;
-    const canDecrypt = canViewSensitive(req.user) || Boolean(grant);
+    const grant = await activeGrant(req.user.id, 'sensitive_fields');
+    const canDecrypt = Boolean(grant);
 
     const data = employees.map((emp) => shapeEmployee(emp, {
       includeSensitive: canDecrypt,
-      viaGrant: Boolean(grant) && !canViewSensitive(req.user),
+      viaGrant: Boolean(grant),
     }));
-
-    await logEvent({
-      req,
-      action: 'EMPLOYEE_DIRECTORY_VIEWED',
-      category: 'EMPLOYEE',
-      severity: 'info',
-      details: `Viewed employee directory (${data.length} record(s), page ${page})`,
-      metadata: {
-        page,
-        limit,
-        total,
-        scopedToDepartment: req.user.role === 'hr_manager' ? req.user.department : 'all',
-      },
-    });
-
-    if (canDecrypt && data.some((e) => !e.sensitiveMasked)) {
-      await logEvent({
-        req,
-        action: 'SENSITIVE_FIELDS_DECRYPTED',
-        category: 'EMPLOYEE',
-        severity: 'critical',
-        details: `Decrypted salary/bank fields for ${data.length} employee record(s)`,
-        metadata: {
-          fields: ['salary', 'bankDetails'],
-          employeeIds: data.slice(0, 50).map((e) => e.id),
-          viaGrant: Boolean(grant) && !canViewSensitive(req.user),
-          grantId: grant?._id ? String(grant._id) : null,
-        },
-      });
-    }
 
     res.status(200).json({
       data,
@@ -136,7 +104,7 @@ exports.getEmployees = async (req, res, next) => {
       },
       access: {
         sensitiveMasked: !canDecrypt,
-        viaGrant: Boolean(grant) && !canViewSensitive(req.user),
+        viaGrant: Boolean(grant),
         scope: req.user.role === 'admin' ? 'all' : req.user.department || 'none',
       },
     });
@@ -157,27 +125,12 @@ exports.getEmployeeById = async (req, res, next) => {
       return res.status(403).json({ message: 'Forbidden: outside your permitted scope' });
     }
 
-    const grant = req.user.role === 'hr_manager'
-      ? await activeGrant(req.user.id, 'sensitive_fields')
-      : null;
-    const canDecrypt = canViewSensitive(req.user) || Boolean(grant);
-
-    if (canDecrypt) {
-      await logEvent({
-        req,
-        action: 'SENSITIVE_FIELDS_DECRYPTED',
-        category: 'EMPLOYEE',
-        severity: 'critical',
-        targetId: employee._id,
-        targetType: 'User',
-        details: `Decrypted sensitive fields for ${employee.email}`,
-        metadata: { fields: ['salary', 'bankDetails'], viaGrant: Boolean(grant) },
-      });
-    }
+    const grant = await activeGrant(req.user.id, 'sensitive_fields');
+    const canDecrypt = Boolean(grant);
 
     return res.status(200).json(shapeEmployee(employee, {
       includeSensitive: canDecrypt,
-      viaGrant: Boolean(grant) && !canViewSensitive(req.user),
+      viaGrant: Boolean(grant),
     }));
   } catch (error) {
     return next(error);

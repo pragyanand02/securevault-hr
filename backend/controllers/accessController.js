@@ -171,3 +171,96 @@ exports.revokeAccess = async (req, res, next) => {
     return next(error);
   }
 };
+
+// @route POST /api/access/admin-session  (Admin self-initiated JIT session)
+exports.startAdminSession = async (req, res, next) => {
+  try {
+    const { reason = 'Administrative verification', durationMinutes = 5 } = req.body;
+    const duration = Math.min(30, Math.max(1, Number(durationMinutes) || 5));
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + duration * 60 * 1000);
+
+    // Terminate any previous active grant for this admin
+    await AccessGrant.updateMany(
+      { grantee: req.user.id, status: 'approved' },
+      { $set: { status: 'expired' } }
+    );
+
+    const grant = await AccessGrant.create({
+      grantee: req.user.id,
+      field: 'sensitive_fields',
+      scope: 'all',
+      reason: String(reason).trim(),
+      status: 'approved',
+      reviewedBy: req.user.id,
+      reviewedAt: now,
+      expiresAt,
+      reviewNote: 'Self-initiated admin JIT decryption session',
+    });
+
+    await logEvent({
+      req,
+      action: 'ADMIN_DECRYPTION_SESSION_STARTED',
+      category: 'ACCESS',
+      severity: 'critical',
+      targetId: grant._id,
+      targetType: 'AccessGrant',
+      details: `Admin unlocked sensitive data session for ${duration}m (Session: ${now.toLocaleTimeString()} to ${expiresAt.toLocaleTimeString()})`,
+      metadata: {
+        reason: String(reason).trim(),
+        durationMinutes: duration,
+        startedAt: now.toISOString(),
+        expiresAt: expiresAt.toISOString(),
+      },
+    });
+
+    return res.status(201).json({ message: 'Decryption session started', grant });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// @route POST /api/access/admin-session/end  (Admin terminate session early)
+exports.endAdminSession = async (req, res, next) => {
+  try {
+    const grant = await AccessGrant.findOne({
+      grantee: req.user.id,
+      status: 'approved',
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!grant) {
+      return res.status(200).json({ message: 'No active decryption session to end' });
+    }
+
+    const now = new Date();
+    const activeSeconds = Math.max(1, Math.round((now - new Date(grant.createdAt)) / 1000));
+    const activeMinutes = Math.floor(activeSeconds / 60);
+    const remSec = activeSeconds % 60;
+    const durationText = activeMinutes > 0 ? `${activeMinutes}m ${remSec}s` : `${activeSeconds}s`;
+
+    grant.status = 'revoked';
+    grant.reviewNote = `Session ended early by admin (Active duration: ${durationText})`;
+    await grant.save();
+
+    await logEvent({
+      req,
+      action: 'ADMIN_DECRYPTION_SESSION_ENDED',
+      category: 'ACCESS',
+      severity: 'warning',
+      targetId: grant._id,
+      targetType: 'AccessGrant',
+      details: `Admin locked sensitive data (Active duration: ${durationText}, Session: ${new Date(grant.createdAt).toLocaleTimeString()} - ${now.toLocaleTimeString()})`,
+      metadata: {
+        startedAt: grant.createdAt,
+        endedAt: now.toISOString(),
+        activeSeconds,
+        durationText,
+      },
+    });
+
+    return res.status(200).json({ message: 'Decryption session ended successfully', grant });
+  } catch (error) {
+    return next(error);
+  }
+};

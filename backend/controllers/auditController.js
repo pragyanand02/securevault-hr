@@ -40,15 +40,6 @@ exports.getAuditLogs = async (req, res, next) => {
       AuditLog.find(filter).sort({ sequence: -1 }).skip((page - 1) * limit).limit(limit).lean(),
     ]);
 
-    await logEvent({
-      req,
-      action: 'AUDIT_TRAIL_VIEWED',
-      category: 'SYSTEM',
-      severity: 'warning',
-      details: `Admin viewed the audit trail (page ${page})`,
-      metadata: { filters: Object.keys(filter), page, limit },
-    });
-
     return res.status(200).json({
       data: logs,
       pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) },

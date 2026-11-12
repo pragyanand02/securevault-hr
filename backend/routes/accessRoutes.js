@@ -7,6 +7,8 @@ const {
   getAllGrants,
   reviewAccess,
   revokeAccess,
+  startAdminSession,
+  endAdminSession,
 } = require('../controllers/accessController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const { sensitiveLimiter } = require('../middleware/rateLimiter');
@@ -24,6 +26,8 @@ router.get('/requests/me', getMyGrants);
 router.get('/active', getActiveGrant);
 
 router.get('/requests', authorize('admin'), getAllGrants);
+router.post('/admin-session', authorize('admin'), startAdminSession);
+router.post('/admin-session/end', authorize('admin'), endAdminSession);
 router.put('/requests/:id/review', authorize('admin'), objectIdParam('id'), accessReviewRules, handleValidation, reviewAccess);
 router.delete('/requests/:id', authorize('admin'), objectIdParam('id'), handleValidation, revokeAccess);
 
